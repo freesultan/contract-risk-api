@@ -28,6 +28,8 @@ app.post("/scan", async (req, res) => {
     const { bytecode, implementationSlotValue } = await fetchOnChainData(address, chain);
     const result = analyzeBytecode({ bytecode, implementationSlotValue });
 
+    // Best-effort local log (not durable on serverless — Nevermined's own
+    // dashboard is the authoritative source for paid-usage evidence there).
     logUsage({
       route: "/scan",
       address,
@@ -52,9 +54,4 @@ app.post("/scan", async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`contract-risk-api listening on :${PORT} (payment gating: ${paymentEnabled ? "ON" : "OFF (free/test mode)"})`);
-});
-
-export { app };
+export { app, paymentEnabled };
