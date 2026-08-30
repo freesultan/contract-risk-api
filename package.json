@@ -18,7 +18,10 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "@nevermined-io/payments": "^1.11.0",
+    "@payai/facilitator": "^2.4.4",
+    "@x402/core": "^2.23.0",
+    "@x402/evm": "^2.23.0",
+    "@x402/express": "^2.23.0",
     "dotenv": "^17.4.2",
     "ethers": "^6.17.0",
     "express": "^5.2.1"
