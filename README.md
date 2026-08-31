@@ -75,9 +75,20 @@ just helps agents/LLMs decide to call it).
 To actually go live and start earning:
 
 1. Set `EVM_ADDRESS` (your payout wallet) and `ENABLE_PAYMENTS=true` in the
-   Vercel project's environment variables, then redeploy.
-2. Drive one real settled payment against `/scan` (e.g. call it with an
-   x402-aware client/wallet) — this triggers the Bazaar listing.
+   Vercel project's environment variables, then redeploy. **Done** — live in
+   paid mode as of this writing.
+2. Drive one real settled payment against `/scan` to trigger the Bazaar
+   listing. `scripts/pay-and-scan.js` does this: set `PAYER_PRIVATE_KEY` in
+   `.env` to a wallet holding a little **USDC on Base** (network
+   `eip155:8453` — USDC on another chain, e.g. Polygon or zkSync Era, is a
+   different asset and can't pay this route as configured), then
+   `npm run pay:scan`. The x402 "exact" EVM scheme signs an EIP-3009
+   authorization — gasless for the payer, no prior approval transaction —
+   so the actual cost is exactly `PRICE_PER_SCAN` (currently $0.001), with
+   the facilitator covering gas. Self-paying (same wallet as `EVM_ADDRESS`)
+   works too and nets to ~$0 since the funds return to the same address; you
+   just need that wallet to already hold at least `PRICE_PER_SCAN` in Base
+   USDC to sign the authorization against.
 3. Optionally also submit the endpoint to independent aggregators that
    aren't facilitator-specific, e.g. https://x402all.com (manual "Register
    your origin" submission) — worth rechecking periodically since this
