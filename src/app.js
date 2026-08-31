@@ -7,6 +7,11 @@ import { buildPaymentMiddleware, logRequestMode } from "./payment.js";
 import { buildX402Manifest, buildLlmsTxt } from "./discovery.js";
 
 const app = express();
+// Vercel terminates TLS upstream and forwards over plain HTTP with
+// X-Forwarded-Proto: https — without trusting that header, req.protocol
+// (used to build the /.well-known/x402 and /llms.txt resource URLs) reports
+// "http", handing agents a URL that isn't actually the site's real address.
+app.set("trust proxy", true);
 app.use(express.json());
 app.use(logRequestMode);
 
