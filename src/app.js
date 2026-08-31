@@ -4,6 +4,7 @@ import { fetchOnChainData, DEFAULT_RPC_URLS } from "./chain.js";
 import { analyzeBytecode } from "./heuristics.js";
 import { logUsage } from "./logger.js";
 import { buildPaymentMiddleware, logRequestMode } from "./payment.js";
+import { buildX402Manifest, buildLlmsTxt } from "./discovery.js";
 
 const app = express();
 app.use(express.json());
@@ -14,6 +15,16 @@ app.use(paymentMiddleware);
 
 app.get("/health", (req, res) => {
   res.json({ ok: true, paymentEnabled, supportedChains: Object.keys(DEFAULT_RPC_URLS) });
+});
+
+app.get("/.well-known/x402", (req, res) => {
+  const baseUrl = `${req.protocol}://${req.get("host")}`;
+  res.json(buildX402Manifest(baseUrl));
+});
+
+app.get("/llms.txt", (req, res) => {
+  const baseUrl = `${req.protocol}://${req.get("host")}`;
+  res.type("text/plain").send(buildLlmsTxt(baseUrl));
 });
 
 app.post("/scan", async (req, res) => {

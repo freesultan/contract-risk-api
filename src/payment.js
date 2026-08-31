@@ -18,6 +18,51 @@ import { logUsage } from "./logger.js";
 const ENABLED = String(process.env.ENABLE_PAYMENTS).toLowerCase() === "true";
 const NETWORK = process.env.X402_NETWORK || "eip155:8453"; // Base mainnet
 
+// Single source of truth for /scan's terms, shared by the live x402 payment
+// route (via declareDiscoveryExtension, once ENABLE_PAYMENTS=true) and the
+// static /.well-known/x402 + /llms.txt discovery surfaces (src/discovery.js),
+// so price/description/schema can't drift between the two.
+const SCAN_DESCRIPTION =
+  "On-chain contract risk score: detects upgradeable proxies and privileged functions from live bytecode. Use before trading/interacting with an unfamiliar contract.";
+
+const SCAN_INPUT_SCHEMA = {
+  properties: {
+    address: {
+      type: "string",
+      description: "0x-prefixed EVM contract address to scan",
+    },
+    chain: {
+      type: "string",
+      enum: ["base", "ethereum"],
+      description: "Chain to query (default: base)",
+    },
+  },
+  required: ["address"],
+};
+
+const SCAN_EXAMPLE_INPUT = {
+  address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  chain: "base",
+};
+
+const SCAN_EXAMPLE_OUTPUT = {
+  ...SCAN_EXAMPLE_INPUT,
+  riskLevel: "low",
+  riskScore: 0,
+};
+
+export function getScanTerms() {
+  return {
+    price: process.env.PRICE_PER_SCAN || "$0.02",
+    network: NETWORK,
+    payTo: process.env.EVM_ADDRESS || null,
+    description: SCAN_DESCRIPTION,
+    inputSchema: SCAN_INPUT_SCHEMA,
+    exampleInput: SCAN_EXAMPLE_INPUT,
+    exampleOutput: SCAN_EXAMPLE_OUTPUT,
+  };
+}
+
 export async function buildPaymentMiddleware() {
   if (!ENABLED) {
     return {
@@ -26,10 +71,8 @@ export async function buildPaymentMiddleware() {
     };
   }
 
-  const payTo = process.env.EVM_ADDRESS;
-  const price = process.env.PRICE_PER_SCAN || "$0.02";
-
-  if (!payTo) {
+  const terms = getScanTerms();
+  if (!terms.payTo) {
     throw new Error("ENABLE_PAYMENTS=true requires EVM_ADDRESS to be set.");
   }
 
@@ -37,6 +80,7 @@ export async function buildPaymentMiddleware() {
   const { ExactEvmScheme } = await import("@x402/evm/exact/server");
   const { HTTPFacilitatorClient } = await import("@x402/core/server");
   const { facilitator } = await import("@payai/facilitator");
+  const { declareDiscoveryExtension } = await import("@x402/extensions/bazaar");
 
   const facilitatorClient = new HTTPFacilitatorClient(facilitator);
   const resourceServer = new x402ResourceServer(facilitatorClient).register(
@@ -46,8 +90,19 @@ export async function buildPaymentMiddleware() {
 
   const routes = {
     "POST /scan": {
-      accepts: [{ scheme: "exact", price, network: NETWORK, payTo }],
-      description: "On-chain contract risk score",
+      accepts: [
+        { scheme: "exact", price: terms.price, network: terms.network, payTo: terms.payTo },
+      ],
+      description: terms.description,
+      // Bazaar discovery metadata: `@x402/express` auto-registers this with the
+      // facilitator's resource server, and PayAI indexes it at
+      // GET /discovery/resources after the route's first real settled payment.
+      extensions: declareDiscoveryExtension({
+        bodyType: "json",
+        input: terms.exampleInput,
+        inputSchema: terms.inputSchema,
+        output: { example: terms.exampleOutput },
+      }),
     },
   };
 

@@ -55,12 +55,47 @@ contract returned zero flags in manual testing despite typically having
 privileged functions). This is a v0 heuristic, not a guarantee — worth
 tightening if the idea earns out.
 
-## Distribution (not done yet)
+## Distribution
 
-Nothing earns until agents/bots actually find and call this. Options
-researched: the big Coinbase-run x402 Bazaar directory (10,000+ tools) only
-indexes CDP-facilitator services, so it won't auto-list us. PayAI or other
-neutral registries would need checking for an equivalent discovery layer.
+Nothing earns until agents/bots actually find and call this. Coinbase's
+CDP-run x402 Bazaar only indexes CDP-facilitator traffic, so it won't
+auto-list us — but PayAI runs its own equivalent discovery catalog at
+`GET https://facilitator.payai.network/discovery/resources`, and it's tied
+directly to the facilitator we already use.
+
+`POST /scan`'s route config in `src/payment.js` declares a Bazaar discovery
+extension (`@x402/extensions/bazaar`'s `declareDiscoveryExtension`) with a
+description, example input/output, and a JSON Schema for the body.
+`@x402/express`'s `paymentMiddleware` auto-registers this with the resource
+server — no extra wiring needed. Once the route has settled **one real
+payment**, PayAI indexes it in `/discovery/resources` automatically (an
+empty `declareDiscoveryExtension({})` is enough to qualify; richer metadata
+just helps agents/LLMs decide to call it).
+
+To actually go live and start earning:
+
+1. Set `EVM_ADDRESS` (your payout wallet) and `ENABLE_PAYMENTS=true` in the
+   Vercel project's environment variables, then redeploy.
+2. Drive one real settled payment against `/scan` (e.g. call it with an
+   x402-aware client/wallet) — this triggers the Bazaar listing.
+3. Optionally also submit the endpoint to independent aggregators that
+   aren't facilitator-specific, e.g. https://x402all.com (manual "Register
+   your origin" submission) — worth rechecking periodically since this
+   space is adding directories fast.
+
+A third, facilitator-independent discovery surface is also served directly
+by this app (`src/discovery.js`, generated from the same terms as the live
+route so it can't drift):
+
+- `GET /.well-known/x402` — machine-readable manifest (price, network,
+  payTo, input/output schema) for crawlers that scrape this well-known path
+  directly rather than querying a facilitator's API.
+- `GET /llms.txt` — plain-text summary for LLM agents, following the
+  convention used by catalogs like x402.openwebninja.com.
+
+Both reflect real config either way: while `ENABLE_PAYMENTS` is off they
+report `"mode": "free-test"` and `payTo: null`; once it's on they report the
+actual price/network/wallet being charged.
 
 ## Running locally
 
