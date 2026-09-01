@@ -40,7 +40,17 @@ app.use(paymentMiddleware);
 // Browser UI. Served at / so a human can pay for and read a scan without any
 // tooling; agents keep using the JSON route directly.
 app.get("/", (req, res) => {
-  res.type("html").send(buildUiHtml());
+  // An unhandled throw here becomes an opaque Vercel FUNCTION_INVOCATION_FAILED
+  // with no message and no stack in the response, which is unactionable. Catch
+  // it and return the actual error so a failure is diagnosable from a curl.
+  try {
+    res.type("html").send(buildUiHtml());
+  } catch (err) {
+    res
+      .status(500)
+      .type("text/plain")
+      .send(`UI render failed: ${err && err.stack ? err.stack : err}`);
+  }
 });
 
 app.get("/health", (req, res) => {
@@ -93,6 +103,19 @@ app.post(SCAN_PATHS, async (req, res) => {
     });
     res.status(400).json({ error: err.message });
   }
+});
+
+// Last-resort error handler. Without it, anything thrown outside a route's own
+// try/catch surfaces on Vercel as FUNCTION_INVOCATION_FAILED — a 500 with no
+// message, no stack, and nothing in the response to act on.
+// eslint-disable-next-line no-unused-vars -- Express identifies error handlers by arity
+app.use((err, req, res, next) => {
+  console.error("Unhandled error:", err);
+  if (res.headersSent) return;
+  res.status(500).json({
+    error: err && err.message ? err.message : String(err),
+    route: req.path,
+  });
 });
 
 export { app, paymentEnabled };
