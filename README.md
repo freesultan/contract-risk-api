@@ -46,6 +46,44 @@ curl -s -i -X POST https://contract-risk-api-six.vercel.app/scan \
 # matches your wallet.
 ```
 
+## Safety of `pay:scan` (it signs a real transfer)
+
+The script signs automatically, with no interactive confirmation, so what
+bounds the damage is worth stating explicitly:
+
+- **The key never leaves the machine.** It goes to viem's
+  `privateKeyToAccount` and then to `@x402/evm`'s signer, which contains no
+  `fetch` calls and no URLs anywhere in its 56 dist files. The only outbound
+  request is to `SCAN_API_URL`. The script prints the derived address, never
+  the key. `.env` is gitignored (verified with `git check-ignore`).
+- **An EIP-3009 authorization is narrow**: it commits to one exact amount,
+  one exact recipient, a random nonce, and an expiry. It is not an allowance
+  and cannot be replayed for more.
+- **There is a per-payment spend cap.** The SDK defaults to `$1`; this script
+  pins it explicitly to `$0.05` (`MAX_PAYMENT`), verified both ways — a
+  hostile server demanding `$0.99` gets refused with nothing signed, while
+  the real `$0.001` route still pays.
+
+Residual risk: anything **at or under the cap** is signed with no prompt, so
+a wrong or tampered `SCAN_API_URL` could pay a stranger up to `MAX_PAYMENT`.
+Note also that `@x402/fetch` re-signs a second authorization (fresh nonce) on
+its internal `recovered` retry path, so budget worst case as 2× the cap.
+
+Given that, **use a burner wallet** funded with a few cents rather than a
+main wallet. That caps total exposure at the balance regardless of any
+supply-chain assumption about the `@x402/*` packages.
+
+## Known limitation (cold-start 502)
+
+One observed request to the deployed `/scan` returned
+`502 {"error":"Facilitator supported request timed out after 30000ms"}` —
+the resource server's call to the facilitator's `/supported` endpoint
+exceeded its 30s budget on a cold start. It did not reproduce (6/6
+subsequent probes returned a normal 402 in <1.2s, and the facilitator's
+`/supported` answers in ~1s when called directly), so this looks like a
+cold-start race rather than a facilitator outage. Worth watching: a paying
+agent that hits a cold instance could see a 502 instead of a 402.
+
 ## Known limitation (heuristic accuracy)
 
 Function-selector detection is a bytecode substring search for the standard
@@ -63,6 +101,14 @@ auto-list us — but PayAI runs its own equivalent discovery catalog at
 `GET https://facilitator.payai.network/discovery/resources`, and it's tied
 directly to the facilitator we already use.
 
+The route is **live in that catalog** as of 2026-09-01. Its entry carries the
+description, price, payTo, example input/output, plus `serviceName`
+("Contract Risk API") and `tags` — the last two are `RouteConfig` fields
+rather than discovery-extension ones, and were initially indexed as `null`,
+which costs discoverability when agents filter ~28k resources. They now come
+from the same shared terms as everything else. **Redeploy is needed for the
+catalog to pick them up.**
+
 `POST /scan`'s route config in `src/payment.js` declares a Bazaar discovery
 extension (`@x402/extensions/bazaar`'s `declareDiscoveryExtension`) with a
 description, example input/output, and a JSON Schema for the body.
@@ -78,7 +124,14 @@ To actually go live and start earning:
    Vercel project's environment variables, then redeploy. **Done** — live in
    paid mode as of this writing.
 2. Drive one real settled payment against `/scan` to trigger the Bazaar
-   listing. `scripts/pay-and-scan.js` does this: set `PAYER_PRIVATE_KEY` in
+   listing. **Done — 2026-09-01.** Settled on Base in tx
+   `0xf879c81db44142a33defda343f1f0f931cc066f2a2791c491093ce56eb51b054`
+   (block 50740559): 0.001 USDC from a burner wallet to the payout address,
+   gas paid by the facilitator. PayAI indexed `/scan` into
+   `/discovery/resources` within minutes — the catalog went from 27,946 to
+   27,947 entries with this route as the newest.
+
+   `scripts/pay-and-scan.js` does this: set `PAYER_PRIVATE_KEY` in
    `.env` to a wallet holding a little **USDC on Base** (network
    `eip155:8453` — USDC on another chain, e.g. Polygon or zkSync Era, is a
    different asset and can't pay this route as configured), then
@@ -115,6 +168,16 @@ npm install
 cp .env.example .env       # set EVM_ADDRESS to your own wallet if testing payments
 npm start                  # node src/server.js
 npm test                   # runs test/heuristics.test.js (no network needed)
+```
+
+**Node 20+ is required to run `npm run pay:scan`.** Signing the x402
+authorization needs the WebCrypto global, which Node 18 exposes to ESM only
+behind a flag (without it the SDK fails with a bare "Crypto API not
+available" from deep in the stack). The script now checks this up front and
+tells you what to do. On a Node 18 machine, either upgrade or run:
+
+```bash
+node --experimental-global-webcrypto scripts/pay-and-scan.js
 ```
 
 ## Evidence log format

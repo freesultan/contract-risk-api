@@ -18,6 +18,8 @@ export function buildX402Manifest(baseUrl) {
         type: "http",
         method: "POST",
         description: terms.description,
+        serviceName: terms.serviceName,
+        tags: terms.tags,
         accepts: [
           {
             scheme: "exact",
@@ -55,9 +57,11 @@ export function buildLlmsTxt(baseUrl) {
   const terms = getScanTerms();
   const payToLine = terms.payTo ? `, payTo ${terms.payTo}` : " (payTo not yet configured)";
 
-  return `# contract-risk-api
+  return `# ${terms.serviceName}
 
 ${terms.description}
+
+Tags: ${terms.tags.join(", ")}
 
 ## POST ${baseUrl}/scan
 Price: ${terms.price} via x402 "exact" scheme, network ${terms.network}${payToLine}.

@@ -51,12 +51,31 @@ const SCAN_EXAMPLE_OUTPUT = {
   riskScore: 0,
 };
 
+// Service-level metadata for the Bazaar catalog. These are `RouteConfig`
+// fields (not part of the discovery extension), and without them the catalog
+// entry carries `serviceName: null` / `tags: null` — which is what agents and
+// LLMs filter and rank on when choosing between ~28k listed resources.
+const SCAN_SERVICE_NAME = "Contract Risk API";
+
+const SCAN_TAGS = [
+  "security",
+  "risk-analysis",
+  "smart-contracts",
+  "evm",
+  "base",
+  "ethereum",
+  "defi",
+  "trading",
+];
+
 export function getScanTerms() {
   return {
     price: process.env.PRICE_PER_SCAN || "$0.02",
     network: NETWORK,
     payTo: process.env.EVM_ADDRESS || null,
     description: SCAN_DESCRIPTION,
+    serviceName: SCAN_SERVICE_NAME,
+    tags: SCAN_TAGS,
     inputSchema: SCAN_INPUT_SCHEMA,
     exampleInput: SCAN_EXAMPLE_INPUT,
     exampleOutput: SCAN_EXAMPLE_OUTPUT,
@@ -94,6 +113,8 @@ export async function buildPaymentMiddleware() {
         { scheme: "exact", price: terms.price, network: terms.network, payTo: terms.payTo },
       ],
       description: terms.description,
+      serviceName: terms.serviceName,
+      tags: terms.tags,
       // Bazaar discovery metadata: `@x402/express` auto-registers this with the
       // facilitator's resource server, and PayAI indexes it at
       // GET /discovery/resources after the route's first real settled payment.
