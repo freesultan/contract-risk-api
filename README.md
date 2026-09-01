@@ -101,13 +101,38 @@ auto-list us — but PayAI runs its own equivalent discovery catalog at
 `GET https://facilitator.payai.network/discovery/resources`, and it's tied
 directly to the facilitator we already use.
 
-The route is **live in that catalog** as of 2026-09-01. Its entry carries the
-description, price, payTo, example input/output, plus `serviceName`
-("Contract Risk API") and `tags` — the last two are `RouteConfig` fields
-rather than discovery-extension ones, and were initially indexed as `null`,
-which costs discoverability when agents filter ~28k resources. They now come
-from the same shared terms as everything else. **Redeploy is needed for the
-catalog to pick them up.**
+The route is **live in that catalog** as of 2026-09-01, with the correct
+description, price, payTo and input/output schema.
+
+### The catalog row's metadata is write-once (`serviceName`/`tags` are null)
+
+`serviceName`, `tags` and `iconUrl` are `RouteConfig` fields rather than
+discovery-extension ones, so the first deploy didn't send them and the row
+was indexed with them `null`. They are now emitted — but **the row still
+shows null, and re-paying does not fix it.** Established by testing, not
+assumption:
+
+- The live 402's `resource` object now carries `serviceName` and `tags`, and
+  a capture of the client's `PAYMENT-SIGNATURE` payload (replaying the real
+  live 402 against a local relay) confirms both survive into what is sent to
+  the facilitator, alongside the `bazaar` extension. Our side is correct.
+- A second payment settled successfully (tx `0xb4804de7…03f9`, payout wallet
+  now 0.002 USDC). PayAI counted it —
+  `/discovery/resources/<urlencoded>/stats` reports 2 settlements — but the
+  catalog row's `lastUpdated` stayed frozen at the first settlement and the
+  fields stayed null. **So don't re-pay hoping to refresh metadata.**
+- Their OpenAPI (`/openapi.json`) exposes no register/refresh endpoint, and
+  `/discovery/resources` accepts only `limit` and `offset` — the `?payTo=`
+  filter mentioned in the generic x402 docs is not implemented here.
+
+The x402 docs state catalog behaviour is "an implementation detail of the
+facilitator operator". So the options are: ask PayAI to re-index
+(info@payai.network), or force a fresh row by serving the route at a new
+resource URL and paying once — which works because rows are created per URL,
+but leaves the old null-metadata row behind.
+
+This is polish, not a blocker: `description` — the main thing agents and LLMs
+rank on — is populated and correct.
 
 `POST /scan`'s route config in `src/payment.js` declares a Bazaar discovery
 extension (`@x402/extensions/bazaar`'s `declareDiscoveryExtension`) with a
