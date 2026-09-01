@@ -31,8 +31,12 @@ import { privateKeyToAccount } from "viem/accounts";
 const {
   PAYER_PRIVATE_KEY,
   SCAN_API_URL = "https://contract-risk-api-six.vercel.app/v1/scan",
-  SCAN_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-  SCAN_CHAIN = "base",
+  // WBTC — the highest-signal demo (high risk, four flags). It only exists on
+  // Ethereum: the same address on Base has no code and returns
+  // riskLevel "unknown", so SCAN_CHAIN must match the address being scanned.
+  // This is unrelated to X402_NETWORK below, which is the chain you *pay* on.
+  SCAN_ADDRESS = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+  SCAN_CHAIN = "ethereum",
   X402_NETWORK = "eip155:8453",
   MAX_PAYMENT = "$0.05",
 } = process.env;
