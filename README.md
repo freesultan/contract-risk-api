@@ -14,6 +14,36 @@ custodies funds. Chosen after ruling out Coinbase's facilitator (per
 instruction) and Nevermined (forces a mandatory Stripe Connect payout,
 which wasn't usable — see git history for that abandoned integration).
 
+## Browser UI
+
+`GET /` serves a self-contained page that lets a human pay for a scan with a
+browser wallet — connect, sign, read the result — with no tooling. It
+implements the x402 "exact" EVM scheme by hand against `window.ethereum`
+(the client SDKs assume a bundler, which this deploy target doesn't have),
+signing the EIP-3009 authorization via `eth_signTypedData_v4`. Payment is
+gasless for the visitor; the facilitator broadcasts and covers gas.
+
+The payload shape wasn't guessed: it was validated against the facilitator's
+`POST /verify`, which checks the signature and balance *without settling*, so
+the browser code was proven correct at zero cost before being written.
+`/verify` is the right tool for testing payment changes — use it instead of
+burning real settlements.
+
+The page is served from a JS module rather than a static file because files
+read from disk at request time aren't reliably included in Vercel's function
+bundle, while an imported module always is.
+
+**Not verified:** the wallet interaction itself (connect / network switch /
+signing prompt) needs a real browser with an injected wallet, which can't be
+exercised headlessly here. The payment payload it builds is verified; the
+wallet plumbing around it is not.
+
+CORS is open (`Access-Control-Allow-Origin: *`) and exposes
+`PAYMENT-REQUIRED` / `PAYMENT-RESPONSE` while allowing `PAYMENT-SIGNATURE`,
+so the API is payable from a browser page on *any* origin, not just this one
+— non-safelisted response headers are invisible to cross-origin JS otherwise.
+PayAI's own reference merchant does the same.
+
 ## What's built
 
 - `POST /scan { address, chain }` → risk score, running against **live**
@@ -130,6 +160,17 @@ facilitator operator". So the options are: ask PayAI to re-index
 (info@payai.network), or force a fresh row by serving the route at a new
 resource URL and paying once — which works because rows are created per URL,
 but leaves the old null-metadata row behind.
+
+**We took the new-URL route.** The scan is now served at both `/scan` and
+`/v1/scan` with identical terms (`SCAN_PATHS` in `src/payment.js`), and
+`/v1/scan` is canonical for the manifest, `llms.txt` and the browser UI. The
+first settled payment against `/v1/scan` should create a second catalog row
+carrying `serviceName` and `tags`. `/scan` keeps working, so the existing
+listing and any agent already using it are unaffected — at the cost of one
+stale row in the catalog.
+
+To do it after deploying: `SCAN_API_URL=https://<host>/v1/scan npm run pay:scan`,
+then re-check the catalog.
 
 This is polish, not a blocker: `description` — the main thing agents and LLMs
 rank on — is populated and correct.

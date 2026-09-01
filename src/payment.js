@@ -57,6 +57,14 @@ const SCAN_EXAMPLE_OUTPUT = {
 // LLMs filter and rank on when choosing between ~28k listed resources.
 const SCAN_SERVICE_NAME = "Contract Risk API";
 
+// Paths the scan route is served at. The catalog keys rows by resource URL and
+// never re-reads metadata for a row it already has, so the versioned alias is
+// how a listing with serviceName/tags gets created (see README). Order matters:
+// the first entry is the original, still-indexed URL; the last is canonical for
+// new discovery surfaces.
+export const SCAN_PATHS = ["/scan", "/v1/scan"];
+export const CANONICAL_SCAN_PATH = SCAN_PATHS[SCAN_PATHS.length - 1];
+
 const SCAN_TAGS = [
   "security",
   "risk-analysis",
@@ -107,25 +115,50 @@ export async function buildPaymentMiddleware() {
     new ExactEvmScheme()
   );
 
-  const routes = {
-    "POST /scan": {
-      accepts: [
-        { scheme: "exact", price: terms.price, network: terms.network, payTo: terms.payTo },
-      ],
-      description: terms.description,
-      serviceName: terms.serviceName,
-      tags: terms.tags,
-      // Bazaar discovery metadata: `@x402/express` auto-registers this with the
-      // facilitator's resource server, and PayAI indexes it at
-      // GET /discovery/resources after the route's first real settled payment.
-      extensions: declareDiscoveryExtension({
-        bodyType: "json",
-        input: terms.exampleInput,
-        inputSchema: terms.inputSchema,
-        output: { example: terms.exampleOutput },
-      }),
-    },
+  const routeConfig = {
+    accepts: [
+      { scheme: "exact", price: terms.price, network: terms.network, payTo: terms.payTo },
+    ],
+    description: terms.description,
+    serviceName: terms.serviceName,
+    tags: terms.tags,
+    // Bazaar discovery metadata: `@x402/express` auto-registers this with the
+    // facilitator's resource server, and PayAI indexes it at
+    // GET /discovery/resources after the route's first real settled payment.
+    extensions: declareDiscoveryExtension({
+      bodyType: "json",
+      input: terms.exampleInput,
+      inputSchema: terms.inputSchema,
+      output: { example: terms.exampleOutput },
+    }),
+    // Echo the terms in the 402 body as well as the PAYMENT-REQUIRED header.
+    // The header is canonical, but a cross-origin browser client can only read
+    // it when CORS exposes it, and the body always survives — PayAI's own
+    // reference merchant does the same.
+    unpaidResponseBody: () => ({
+      contentType: "application/json",
+      body: {
+        x402Version: 2,
+        error: "PAYMENT-SIGNATURE header is required",
+        accepts: [
+          {
+            scheme: "exact",
+            network: terms.network,
+            payTo: terms.payTo,
+            price: terms.price,
+            description: terms.description,
+          },
+        ],
+      },
+    }),
   };
+
+  // Both paths serve the same route. SCAN_PATHS[0] stays for the agents and
+  // catalog entry that already know it; the versioned alias is a distinct
+  // resource URL, which is what earns a fresh Bazaar row (see README).
+  const routes = Object.fromEntries(
+    SCAN_PATHS.map((p) => [`POST ${p}`, routeConfig])
+  );
 
   return {
     enabled: true,
