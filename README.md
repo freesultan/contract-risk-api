@@ -67,9 +67,11 @@ PayAI's own reference merchant does the same.
 ```bash
 curl -s https://contract-risk-api-six.vercel.app/health
 
-curl -s -i -X POST https://contract-risk-api-six.vercel.app/scan \
+# Use a demo address that actually trips the heuristic (see "Demo addresses"
+# below) — the old USDC example returns an empty result and looks broken.
+curl -s -i -X POST https://contract-risk-api-six.vercel.app/v1/scan \
   -H "Content-Type: application/json" \
-  -d '{"address":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","chain":"base"}'
+  -d '{"address":"0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599","chain":"ethereum"}'
 # expect 402 with a payment-required header when ENABLE_PAYMENTS=true;
 # decode it: echo "<header value>" | base64 -d | python3 -m json.tool
 # check: network is "eip155:8453" (Base MAINNET, real money) and payTo
@@ -133,6 +135,57 @@ scripts/probe-candidates.js` re-checks them and prints the full table.
 
 WBTC is the best single demo (proxy aside): four flags and the only `high` in
 the set. USDbC is the best proxy demo on Base, and is what the UI prefills.
+
+### Copy-pasteable
+
+Swap the host for `http://localhost:3000` to run these free against a local
+server (`ENABLE_PAYMENTS` unset), or pay them for real with
+`SCAN_ADDRESS=... SCAN_CHAIN=... npm run pay:scan`.
+
+```bash
+# Highest-signal demo: WBTC, four privileged-function flags
+curl -s -X POST https://contract-risk-api-six.vercel.app/v1/scan \
+  -H "Content-Type: application/json" \
+  -d '{"address":"0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599","chain":"ethereum"}'
+
+# Proxy detection on Base
+curl -s -X POST https://contract-risk-api-six.vercel.app/v1/scan \
+  -H "Content-Type: application/json" \
+  -d '{"address":"0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA","chain":"base"}'
+```
+
+Real responses (captured from the live heuristic, not illustrative):
+
+```json
+{
+  "address": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+  "chain": "ethereum",
+  "isContract": true,
+  "isProxy": false,
+  "flags": [
+    { "label": "has an owner() function (centralized control)", "weight": 5 },
+    { "label": "owner can transfer ownership", "weight": 5 },
+    { "label": "owner/admin can mint new tokens", "weight": 15 },
+    { "label": "owner/admin can pause transfers", "weight": 10 }
+  ],
+  "riskScore": 35,
+  "riskLevel": "high"
+}
+```
+
+```json
+{
+  "address": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+  "chain": "base",
+  "isContract": true,
+  "isProxy": true,
+  "flags": [
+    { "label": "upgradeable proxy (EIP-1967) — logic can be swapped by admin", "weight": 10 }
+  ],
+  "riskScore": 10,
+  "riskLevel": "medium"
+}
+```
 
 ## Known limitation (proxy false negatives)
 
