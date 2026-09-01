@@ -30,7 +30,7 @@ import { privateKeyToAccount } from "viem/accounts";
 
 const {
   PAYER_PRIVATE_KEY,
-  SCAN_API_URL = "https://contract-risk-api-six.vercel.app/scan",
+  SCAN_API_URL = "https://contract-risk-api-six.vercel.app/v1/scan",
   SCAN_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
   SCAN_CHAIN = "base",
   X402_NETWORK = "eip155:8453",

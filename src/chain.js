@@ -19,7 +19,17 @@ function getProvider(chain) {
 
 export async function fetchOnChainData(address, chain) {
   if (!ethers.isAddress(address)) {
-    throw new Error("Invalid address");
+    // A mixed-case address that is 40 hex chars long but fails isAddress has a
+    // bad EIP-55 checksum. Keep rejecting it — that check exists to catch
+    // typos — but say so, because the same address lowercased is accepted and
+    // a bare "Invalid address" makes that look arbitrary.
+    if (/^0x[0-9a-fA-F]{40}$/.test(address) && address !== address.toLowerCase()) {
+      throw new Error(
+        "Invalid address: failed EIP-55 checksum (capitalization doesn't match). " +
+          "Re-copy it, or pass it in all lowercase to skip the checksum check."
+      );
+    }
+    throw new Error("Invalid address: expected a 0x-prefixed 40-character hex address");
   }
   const provider = getProvider(chain);
   const [bytecode, implementationSlotValue] = await Promise.all([

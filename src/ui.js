@@ -25,7 +25,11 @@ export function buildUiHtml(scanPath = CANONICAL_SCAN_PATH) {
     payTo: terms.payTo,
     serviceName: terms.serviceName,
     description: terms.description,
-    exampleAddress: terms.exampleInput.address,
+    // The published schema's example is USDC, but USDC scores 0 with no flags,
+    // which makes the UI look broken on first load. Prefill a Base contract
+    // that actually trips the proxy heuristic so the first scan shows real
+    // output. (USDbC, verified: isProxy true, medium risk.)
+    exampleAddress: "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
   };
 
   return `<!doctype html>

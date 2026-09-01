@@ -114,6 +114,42 @@ subsequent probes returned a normal 402 in <1.2s, and the facilitator's
 cold-start race rather than a facilitator outage. Worth watching: a paying
 agent that hits a cold instance could see a 502 instead of a 402.
 
+## Demo addresses (verified against live mainnet)
+
+The published example (USDC) scores 0 with no flags, which makes the API look
+inert. These were run through the real heuristic — `node
+scripts/probe-candidates.js` re-checks them and prints the full table.
+
+| Address | Chain | Result |
+| --- | --- | --- |
+| `0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599` (WBTC) | ethereum | **high**, score 35 — owner, transferOwnership, mint, pause |
+| `0x111111111117dC0aa78b770fA6A738034120C302` (1INCH) | ethereum | medium, score 25 — owner, transferOwnership, mint |
+| `0xdAC17F958D2ee523a2206206994597C13D831ec7` (USDT) | ethereum | medium, score 20 — owner, transferOwnership, pause |
+| `0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA` (USDbC) | base | medium, score 10 — **proxy detected** |
+| `0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22` (cbETH) | base | medium, score 10 — **proxy detected** |
+| `0x4200000000000000000000000000000000000010` (L2StandardBridge) | base | medium, score 10 — **proxy detected** |
+| `0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2` (Aave v3 Pool) | ethereum | medium, score 10 — **proxy detected** |
+| `0x0000000000000000000000000000000000000000` | either | `riskLevel: "unknown"` — EOA/no code path |
+
+WBTC is the best single demo (proxy aside): four flags and the only `high` in
+the set. USDbC is the best proxy demo on Base, and is what the UI prefills.
+
+## Known limitation (proxy false negatives)
+
+**The proxy check only reads the EIP-1967 slot, so it misses proxies that use
+other slots — including USDC itself.** Confirmed on-chain: USDC on Base has an
+empty EIP-1967 slot but a populated legacy OpenZeppelin slot
+(`keccak256("org.zeppelinos.proxy.implementation")` →
+`0x2ce6311ddae708829bc0784c967b7d77d19fd779`). So the API currently reports
+`isProxy: false` for the most widely held stablecoin on both supported chains.
+Lido's stETH (an Aragon-style proxy) is missed too — none of the three common
+slots are populated for it.
+
+Fixing this means reading the legacy Zeppelin and EIP-1822 slots alongside
+EIP-1967. That is a small change, but it would flip existing answers (USDC
+would move from `low` to `medium`), so it is deliberately left as a decision
+rather than applied silently.
+
 ## Known limitation (heuristic accuracy)
 
 Function-selector detection is a bytecode substring search for the standard
