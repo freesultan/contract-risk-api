@@ -250,16 +250,26 @@ facilitator operator". So the options are: ask PayAI to re-index
 resource URL and paying once — which works because rows are created per URL,
 but leaves the old null-metadata row behind.
 
-**We took the new-URL route.** The scan is now served at both `/scan` and
-`/v1/scan` with identical terms (`SCAN_PATHS` in `src/payment.js`), and
-`/v1/scan` is canonical for the manifest, `llms.txt` and the browser UI. The
-first settled payment against `/v1/scan` should create a second catalog row
-carrying `serviceName` and `tags`. `/scan` keeps working, so the existing
-listing and any agent already using it are unaffected — at the cost of one
-stale row in the catalog.
+**We tried the new-URL route, and it did not work.** The scan is served at
+both `/scan` and `/v1/scan` with identical terms (`SCAN_PATHS` in
+`src/payment.js`), and a payment was settled against `/v1/scan` on
+2026-09-01 (tx `0xbb2fef50…c1c7`). PayAI created a second catalog row within a
+minute — total went 27,947 → 27,948 — and that brand-new row **also came back
+with `serviceName: null` and `tags: null`**, despite being created from a
+payload that provably carries both.
 
-To do it after deploying: `SCAN_API_URL=https://<host>/v1/scan npm run pay:scan`,
-then re-check the catalog.
+So the earlier "rows are write-once" theory was wrong. The actual behaviour is
+simpler and worse: **PayAI's indexer does not ingest `serviceName`/`tags` at
+all**, on creation or update. Nothing on the resource-server side can change
+that — the fields are sent correctly and verifiably (see the capture note
+above), and they are dropped downstream.
+
+That leaves emailing info@payai.network as the only remaining option. Don't
+spend more settlements on this; three have now been spent establishing it.
+
+The dual path is kept anyway: `/v1/scan` is a cleaner canonical URL for the
+manifest, `llms.txt` and the UI, and `/scan` keeps working for the existing
+listing and any agent already on it.
 
 This is polish, not a blocker: `description` — the main thing agents and LLMs
 rank on — is populated and correct.
