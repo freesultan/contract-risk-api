@@ -6,6 +6,8 @@
 // (src/payment.js's getScanTerms()), so they can't drift out of sync.
 
 import { ENABLED, getScanTerms, SCAN_PATHS, CANONICAL_SCAN_PATH } from "./payment.js";
+import { RISK_THRESHOLDS, PROXY_WEIGHT } from "./heuristics.js";
+import { FLAGGED_SELECTORS } from "./selectors.js";
 
 export function buildX402Manifest(baseUrl) {
   const terms = getScanTerms();
@@ -72,8 +74,24 @@ Example request: ${JSON.stringify(terms.exampleInput)}
 Example response: ${JSON.stringify(terms.exampleOutput)}
 Also served at: ${SCAN_PATHS.map((p) => baseUrl + p).join(", ")} (identical terms)
 
-## GET ${baseUrl}/
+## Interpreting the response
+riskScore is the sum of the weights of every risk signal found in the
+contract's live bytecode and its EIP-1967 proxy slot. riskLevel bands it:
+low ${0}-${RISK_THRESHOLDS.medium - 1}, medium ${RISK_THRESHOLDS.medium}-${RISK_THRESHOLDS.high - 1}, high ${RISK_THRESHOLDS.high}+, and "unknown" when the
+address holds no code (a wallet, or nothing deployed). Max score ${PROXY_WEIGHT + FLAGGED_SELECTORS.reduce((n, f) => n + f.weight, 0)}.
+Weights: upgradeable proxy +${PROXY_WEIGHT}${FLAGGED_SELECTORS.filter((f) => f.weight > 0)
+  .map((f) => `, ${f.sig} +${f.weight}`)
+  .join("")}.
+Other fields: isContract (address has bytecode), isProxy (logic is swappable
+by an admin), flags (each finding as {label, weight}).
+A high score is not proof of malice and a low score is not a guarantee — it
+measures how much power the owner holds, not their intent. Detection is a
+bytecode heuristic and only reads the EIP-1967 proxy slot, so it can
+under-report on optimised bytecode and on older proxy layouts.
+
+## GET ${baseUrl}/app
 Browser UI: connect an EVM wallet, pay with USDC on Base, read the scan.
+Includes the full scoring reference above, rendered. ${baseUrl}/ redirects here.
 
 ## GET ${baseUrl}/health
 Free liveness check, no payment required.

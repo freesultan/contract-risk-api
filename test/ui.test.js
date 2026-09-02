@@ -122,6 +122,34 @@ test("handles an unknown risk level and an empty flag list", async () => {
   assert.ok(!/class="badge (low|medium|high)"/.test(out));
 });
 
+test("scoring explainer is generated from the scorer's own constants", async () => {
+  const { RISK_THRESHOLDS, PROXY_WEIGHT } = await import("../src/heuristics.js");
+  const { FLAGGED_SELECTORS } = await import("../src/selectors.js");
+  const html = buildUiHtml();
+
+  // Bands must match the thresholds the scorer actually applies.
+  assert.match(html, new RegExp(`0&ndash;${RISK_THRESHOLDS.medium - 1}`));
+  assert.match(html, new RegExp(`${RISK_THRESHOLDS.medium}&ndash;${RISK_THRESHOLDS.high - 1}`));
+  assert.match(html, new RegExp(`${RISK_THRESHOLDS.high}\\+`));
+
+  const expectedMax =
+    PROXY_WEIGHT + FLAGGED_SELECTORS.reduce((n, f) => n + f.weight, 0);
+  assert.match(html, new RegExp(`Maximum possible score is ${expectedMax}`));
+
+  // Every scoring signal is listed, and weight-0 entries are not — they never
+  // appear as flags, so showing them as score contributors would mislead.
+  for (const f of FLAGGED_SELECTORS) {
+    if (f.weight > 0) {
+      assert.ok(html.includes(`<code>${f.sig}</code>`), `${f.sig} should be listed`);
+    } else {
+      assert.ok(
+        !html.includes(`<code>${f.sig}</code></td><td>+`),
+        `${f.sig} has weight 0 and should not be listed as scoring`
+      );
+    }
+  }
+});
+
 test("escapes values echoed back from the request", async () => {
   const out = await scanAndRender({
     ...PROXY_RESULT,

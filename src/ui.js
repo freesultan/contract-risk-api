@@ -12,6 +12,27 @@
 // literals, so nothing inside it collides with this module's interpolation.
 
 import { getScanTerms, ENABLED, CANONICAL_SCAN_PATH } from "./payment.js";
+import { RISK_THRESHOLDS, PROXY_WEIGHT } from "./heuristics.js";
+import { FLAGGED_SELECTORS } from "./selectors.js";
+
+// Scoring reference rendered on the page, built from the scorer's own constants
+// so the explanation can never drift from the behaviour.
+function buildScoringRows() {
+  const rows = [
+    {
+      signal: "Upgradeable proxy (EIP-1967 implementation slot is set)",
+      weight: PROXY_WEIGHT,
+    },
+  ];
+  // Weight-0 entries are recorded but never shown as flags, so listing them
+  // in a table of things that add to the score would be misleading.
+  for (const f of FLAGGED_SELECTORS) {
+    if (f.weight > 0) rows.push({ signal: `<code>${f.sig}</code>`, weight: f.weight });
+  }
+  return rows;
+}
+
+const MAX_SCORE = PROXY_WEIGHT + FLAGGED_SELECTORS.reduce((n, f) => n + f.weight, 0);
 
 // Pays the canonical path by default, so UI traffic also accrues settlements
 // against the URL whose catalog row carries the full metadata.
@@ -101,6 +122,25 @@ export function buildUiHtml(scanPath = CANONICAL_SCAN_PATH) {
   dt { color: var(--muted); font-size: 13px; }
   dd { margin: 0; font-size: 13px; }
   ul { margin: 6px 0 0; padding-left: 18px; }
+  summary { cursor: pointer; }
+  summary strong { font-size: 15px; }
+  details[open] summary { margin-bottom: 12px; }
+  details h3 { font-size: 14px; margin: 22px 0 8px; }
+  details p { margin: 10px 0; }
+  table.scoring { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+  table.scoring th, table.scoring td {
+    text-align: left; padding: 7px 10px 7px 0; border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  table.scoring th { color: var(--muted); font-weight: 600; }
+  table.scoring td:last-child, table.scoring th:last-child { width: 1%; white-space: nowrap; }
+  dl.fields { display: block; margin: 12px 0 0; }
+  dl.fields dt { margin-top: 10px; color: var(--fg); font-weight: 600; }
+  dl.fields dd { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+  code {
+    font-family: var(--mono); font-size: 12px; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px;
+  }
   .status { margin-top: 14px; font-size: 13px; min-height: 20px; }
   .err { color: var(--high); }
   .hidden { display: none; }
@@ -132,6 +172,58 @@ export function buildUiHtml(scanPath = CANONICAL_SCAN_PATH) {
   </div>
 
   <div id="result" class="card hidden"></div>
+
+  <details class="card">
+    <summary><strong>How the score works</strong></summary>
+
+    <p>Every scan reads the contract's live bytecode and the EIP-1967 proxy
+    storage slot, then adds a weight for each risk signal it finds. The total
+    is <code>riskScore</code>; <code>riskLevel</code> is just that total sorted
+    into a band.</p>
+
+    <table class="scoring">
+      <thead><tr><th>Level</th><th>Score</th><th>Reading</th></tr></thead>
+      <tbody>
+        <tr><td><span class="badge low">low</span></td><td>0&ndash;${RISK_THRESHOLDS.medium - 1}</td><td>No centralised-control signals found.</td></tr>
+        <tr><td><span class="badge medium">medium</span></td><td>${RISK_THRESHOLDS.medium}&ndash;${RISK_THRESHOLDS.high - 1}</td><td>Privileged functions or upgradeability present.</td></tr>
+        <tr><td><span class="badge high">high</span></td><td>${RISK_THRESHOLDS.high}+</td><td>Several powerful owner capabilities at once.</td></tr>
+        <tr><td><span class="badge">unknown</span></td><td>&mdash;</td><td>No code at this address (a wallet, or not deployed yet).</td></tr>
+      </tbody>
+    </table>
+
+    <p class="meta">A high score is <strong>not</strong> proof of a scam, and a
+    low score is not a safety guarantee. Plenty of legitimate tokens are
+    pausable and mintable by design &mdash; the score tells you how much power
+    the owner holds, so you can decide whether you trust whoever holds it.</p>
+
+    <h3>What each signal adds</h3>
+    <table class="scoring">
+      <thead><tr><th>Signal</th><th>Weight</th></tr></thead>
+      <tbody>
+        ${buildScoringRows()
+          .map((r) => `<tr><td>${r.signal}</td><td>+${r.weight}</td></tr>`)
+          .join("\n        ")}
+      </tbody>
+    </table>
+    <p class="meta">Maximum possible score is ${MAX_SCORE}. Function detection
+    searches the bytecode for each function's dispatcher pattern, so it can
+    under-report on heavily optimised or obfuscated contracts, and proxy
+    detection currently only reads the EIP-1967 slot &mdash; contracts using
+    older proxy layouts (USDC among them) are reported as
+    <code>isProxy: false</code>. Treat this as one signal among several, not a
+    verdict.</p>
+
+    <h3>Response fields</h3>
+    <dl class="fields">
+      <dt><code>riskLevel</code></dt><dd>Band from the table above: low, medium, high, or unknown.</dd>
+      <dt><code>riskScore</code></dt><dd>Sum of the weights of every signal found.</dd>
+      <dt><code>isContract</code></dt><dd>Whether the address has bytecode. False means a wallet or an undeployed address.</dd>
+      <dt><code>isProxy</code></dt><dd>Whether the EIP-1967 implementation slot is set, meaning an admin can swap the contract's logic.</dd>
+      <dt><code>flags</code></dt><dd>Each signal found, as a human-readable <code>label</code> and its <code>weight</code>.</dd>
+      <dt><code>address</code>, <code>chain</code></dt><dd>Echoed back so a stored result is self-describing.</dd>
+      <dt><code>note</code></dt><dd>Only present when there is no code to analyse.</dd>
+    </dl>
+  </details>
 
   <p class="meta" id="terms"></p>
 </div>

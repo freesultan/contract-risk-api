@@ -1,7 +1,10 @@
 import { EIP1967_IMPLEMENTATION_SLOT, FLAGGED_SELECTORS } from "./selectors.js";
 
 const ZERO_SLOT = "0x" + "0".repeat(64);
-const PROXY_WEIGHT = 10;
+
+// Exported so the docs and the UI's scoring table are generated from the same
+// numbers the scorer uses, and can't drift from it.
+export const PROXY_WEIGHT = 10;
 
 export const RISK_THRESHOLDS = { medium: 10, high: 30 };
 

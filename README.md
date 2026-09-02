@@ -151,6 +151,68 @@ request 1.4s, subsequent ones ~2ms, `/health` and `/app` unaffected at <10ms.
 `test/initializer.test.js` covers the retry, the single-initialization
 guarantee, and concurrent callers sharing one in-flight attempt.
 
+## Understanding the response
+
+A scan reads the contract's live runtime bytecode and its EIP-1967 proxy
+storage slot, adds a weight for each risk signal it finds, and reports the
+total. Nothing is inferred from the token's name, its liquidity, or any
+off-chain reputation source — only what the deployed code exposes.
+
+### Fields
+
+| Field | Meaning |
+| --- | --- |
+| `riskLevel` | The band `riskScore` falls into: `low`, `medium`, `high`, or `unknown`. |
+| `riskScore` | Sum of the weights of every signal found. Higher means more owner power. |
+| `isContract` | Whether the address has bytecode. `false` means a wallet (EOA) or an address nothing is deployed to yet. |
+| `isProxy` | Whether the EIP-1967 implementation slot is set — an admin can swap the contract's logic for different code. |
+| `flags` | One entry per signal found, each `{ label, weight }`. `label` is human-readable; `weight` is its contribution to the score. |
+| `address`, `chain` | Echoed back, so a stored result is self-describing. |
+| `note` | Present only when there is no code to analyse. |
+
+### Levels
+
+| Level | Score | Reading |
+| --- | --- | --- |
+| `low` | 0–9 | No centralised-control signals found. |
+| `medium` | 10–29 | Privileged functions or upgradeability present. |
+| `high` | 30+ | Several powerful owner capabilities at once. |
+| `unknown` | — | Not a contract, so there is nothing to score. |
+
+### Weights
+
+| Signal | Weight |
+| --- | --- |
+| Upgradeable proxy (EIP-1967 slot set) | +10 |
+| `owner()` | +5 |
+| `transferOwnership(address)` | +5 |
+| `mint(address,uint256)` | +15 |
+| `pause()` | +10 |
+| `blacklist(address)` | +20 |
+| `setBlacklist(address,bool)` | +20 |
+| `excludeFromFee(address)` | +5 |
+| `setTaxFee(uint256)` | +15 |
+
+Maximum possible score is 105. `renounceOwnership()` and `unpause()` are
+recognised but weighted 0 — they are context for other findings rather than
+risks themselves, so they never appear as flags.
+
+These numbers are not duplicated by hand: the `/app` page builds its tables
+from `RISK_THRESHOLDS`, `PROXY_WEIGHT` and `FLAGGED_SELECTORS` directly, and a
+test asserts the rendered bands and weights match the scorer's constants.
+
+### How to read a result
+
+**A high score is not proof of a scam, and a low score is not a safety
+guarantee.** Many legitimate tokens are pausable, mintable, and upgradeable by
+design — USDC is all three. What the score tells you is *how much power the
+contract's owner holds over your funds*, so you can decide whether you trust
+whoever holds it. A `high` result on an unknown deployer is a very different
+thing from the same result on a well-known issuer.
+
+Read it as a prompt to look closer, not a verdict — and note the two known
+blind spots below (non-EIP-1967 proxies, and bytecode-level under-detection).
+
 ## Demo addresses (verified against live mainnet)
 
 The published example (USDC) scores 0 with no flags, which makes the API look
