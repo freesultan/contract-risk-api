@@ -73,6 +73,20 @@ const normalizedKey = (() => {
   return `0x${hex}`;
 })();
 
+// A doubled slash in the path (easy to introduce when joining a base URL and a
+// route by hand in .env) makes the host answer 308 to the collapsed path.
+// Following that redirect re-sends the POST body, which on Node 18 fails with
+// UND_ERR_REQ_CONTENT_LENGTH_MISMATCH and surfaces only as "fetch failed" —
+// so normalize rather than let a stray slash break the payment.
+const scanUrl = (() => {
+  const u = new URL(SCAN_API_URL);
+  u.pathname = u.pathname.replace(/\/{2,}/g, "/");
+  return u.toString();
+})();
+if (scanUrl !== SCAN_API_URL) {
+  console.log(`Normalized URL: ${SCAN_API_URL} -> ${scanUrl}`);
+}
+
 const account = privateKeyToAccount(normalizedKey);
 
 // This script signs whatever the server at SCAN_API_URL asks for, with no
@@ -87,9 +101,9 @@ const fetchWithPayment = wrapFetchWithPaymentFromConfig(fetch, {
 
 console.log(`Paying from wallet: ${account.address}`);
 console.log(`Spend cap: ${MAX_PAYMENT} per payment`);
-console.log(`POST ${SCAN_API_URL}`, { address: SCAN_ADDRESS, chain: SCAN_CHAIN });
+console.log(`POST ${scanUrl}`, { address: SCAN_ADDRESS, chain: SCAN_CHAIN });
 
-const res = await fetchWithPayment(SCAN_API_URL, {
+const res = await fetchWithPayment(scanUrl, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ address: SCAN_ADDRESS, chain: SCAN_CHAIN }),

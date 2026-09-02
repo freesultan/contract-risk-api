@@ -37,8 +37,8 @@ app.use(logRequestMode);
 const { enabled: paymentEnabled, middleware: paymentMiddleware } = await buildPaymentMiddleware();
 app.use(paymentMiddleware);
 
-// Browser UI. Served at / so a human can pay for and read a scan without any
-// tooling; agents keep using the JSON route directly.
+// Browser UI, so a human can pay for and read a scan without any tooling;
+// agents keep using the JSON route directly.
 // An unhandled throw here becomes an opaque Vercel FUNCTION_INVOCATION_FAILED
 // with no message and no stack, so catch and report instead.
 function serveUi(req, res) {
@@ -52,20 +52,15 @@ function serveUi(req, res) {
   }
 }
 
-// `GET /` returns FUNCTION_INVOCATION_FAILED on Vercel even though the handler
-// is wrapped above and the error middleware below is confirmed live (a
-// malformed-JSON POST returns their JSON, not Vercel's error page). So the
-// crash isn't reachable from Express at all, which points at the platform's
-// root-path routing rather than this code — it works locally under both Node
-// 18 and 22, via src/server.js and via api/index.js invoked as Vercel invokes
-// it. These two routes separate the two possibilities in a single deploy:
-//   /app        - same UI, non-root path. Works => the root path is the problem.
-//   /__htmltest - a tiny HTML body. Works while /app fails => it's the payload.
+// `/app` is the canonical UI path. `GET /` returned FUNCTION_INVOCATION_FAILED
+// on Vercel while `/app` — the same page from this same handler — worked, which
+// isolated the fault to the platform's root-path routing rather than this code
+// (it serves `/` fine locally under Node 18 and 22, via src/server.js and via
+// api/index.js invoked the way Vercel invokes it). vercel.json now redirects
+// `/` to `/app`, so the root never reaches the function in production; the
+// route below still answers `/` for local runs and any other host.
 app.get("/", serveUi);
 app.get("/app", serveUi);
-app.get("/__htmltest", (req, res) => {
-  res.type("html").send("<!doctype html><title>ok</title><p>html ok</p>");
-});
 
 app.get("/health", (req, res) => {
   res.json({ ok: true, paymentEnabled, supportedChains: Object.keys(DEFAULT_RPC_URLS) });
