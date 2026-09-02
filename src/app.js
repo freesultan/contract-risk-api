@@ -39,10 +39,9 @@ app.use(paymentMiddleware);
 
 // Browser UI. Served at / so a human can pay for and read a scan without any
 // tooling; agents keep using the JSON route directly.
-app.get("/", (req, res) => {
-  // An unhandled throw here becomes an opaque Vercel FUNCTION_INVOCATION_FAILED
-  // with no message and no stack in the response, which is unactionable. Catch
-  // it and return the actual error so a failure is diagnosable from a curl.
+// An unhandled throw here becomes an opaque Vercel FUNCTION_INVOCATION_FAILED
+// with no message and no stack, so catch and report instead.
+function serveUi(req, res) {
   try {
     res.type("html").send(buildUiHtml());
   } catch (err) {
@@ -51,6 +50,21 @@ app.get("/", (req, res) => {
       .type("text/plain")
       .send(`UI render failed: ${err && err.stack ? err.stack : err}`);
   }
+}
+
+// `GET /` returns FUNCTION_INVOCATION_FAILED on Vercel even though the handler
+// is wrapped above and the error middleware below is confirmed live (a
+// malformed-JSON POST returns their JSON, not Vercel's error page). So the
+// crash isn't reachable from Express at all, which points at the platform's
+// root-path routing rather than this code — it works locally under both Node
+// 18 and 22, via src/server.js and via api/index.js invoked as Vercel invokes
+// it. These two routes separate the two possibilities in a single deploy:
+//   /app        - same UI, non-root path. Works => the root path is the problem.
+//   /__htmltest - a tiny HTML body. Works while /app fails => it's the payload.
+app.get("/", serveUi);
+app.get("/app", serveUi);
+app.get("/__htmltest", (req, res) => {
+  res.type("html").send("<!doctype html><title>ok</title><p>html ok</p>");
 });
 
 app.get("/health", (req, res) => {
