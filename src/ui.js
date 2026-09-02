@@ -90,7 +90,10 @@ export function buildUiHtml(scanPath = CANONICAL_SCAN_PATH) {
   .badge {
     display: inline-block; padding: 4px 12px; border-radius: 999px;
     font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: .04em;
+    /* Neutral default so an unrecognised level (e.g. "unknown") still reads. */
+    color: var(--muted); background: var(--bg); border: 1px solid var(--line);
   }
+  .badge.low, .badge.medium, .badge.high { border-color: transparent; }
   .low { color: var(--low); background: var(--low-bg); }
   .medium { color: var(--med); background: var(--med-bg); }
   .high { color: var(--high); background: var(--high-bg); }
@@ -266,25 +269,46 @@ export function buildUiHtml(scanPath = CANONICAL_SCAN_PATH) {
     return fetch(CFG.scanPath, { method: "POST", headers: headers, body: JSON.stringify(body) });
   }
 
+  // Values here are echoed back from the request, so never interpolate them
+  // into markup raw.
+  function esc(v) {
+    return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
   function render(data, settlement) {
-    var lvl = (data.riskLevel || "low").toLowerCase();
-    var html = '<span class="badge ' + lvl + '">' + lvl + " risk</span>";
+    var lvl = String(data.riskLevel || "low").toLowerCase();
+    // Only these map to a CSS class; anything else (e.g. "unknown") gets none.
+    var lvlClass = ["low", "medium", "high"].indexOf(lvl) >= 0 ? lvl : "";
+    var html = '<span class="badge ' + lvlClass + '">' + esc(lvl) + " risk</span>";
     html += "<dl>";
-    html += "<dt>Score</dt><dd>" + data.riskScore + "</dd>";
+    html += "<dt>Score</dt><dd>" + esc(data.riskScore) + "</dd>";
     html += "<dt>Contract</dt><dd>" + (data.isContract ? "yes" : "no (EOA \\u2014 not a contract)") + "</dd>";
     html += "<dt>Upgradeable proxy</dt><dd>" + (data.isProxy ? "yes" : "no") + "</dd>";
-    html += "<dt>Address</dt><dd class='mono'>" + data.address + "</dd>";
+    html += "<dt>Address</dt><dd class='mono'>" + esc(data.address) + "</dd>";
     html += "</dl>";
+    if (data.note) html += "<p class='meta'>" + esc(data.note) + "</p>";
     if (data.flags && data.flags.length) {
       html += "<p style='margin:16px 0 0'><strong>Flags</strong></p><ul>";
-      for (var i = 0; i < data.flags.length; i++) html += "<li>" + data.flags[i] + "</li>";
+      for (var i = 0; i < data.flags.length; i++) {
+        // Flags are {label, weight} objects, not strings — concatenating one
+        // straight into the markup renders "[object Object]".
+        var f = data.flags[i];
+        var isObj = f && typeof f === "object";
+        var label = isObj ? f.label : f;
+        var weight = isObj && typeof f.weight === "number" ? f.weight : null;
+        html += "<li>" + esc(label) +
+          (weight ? " <span class='meta'>(+" + weight + ")</span>" : "") +
+          "</li>";
+      }
       html += "</ul>";
     } else {
       html += "<p class='meta' style='margin-top:14px'>No privileged-function flags detected. This is a v0 heuristic, not a guarantee.</p>";
     }
     if (settlement && settlement.transaction) {
-      html += "<p class='meta' style='margin-top:16px'>Paid " + CFG.price +
-        " \\u2014 <a href='https://basescan.org/tx/" + settlement.transaction +
+      html += "<p class='meta' style='margin-top:16px'>Paid " + esc(CFG.price) +
+        " \\u2014 <a href='https://basescan.org/tx/" + encodeURIComponent(settlement.transaction) +
         "' target='_blank' rel='noopener'>view transaction</a></p>";
     }
     $("result").innerHTML = html;

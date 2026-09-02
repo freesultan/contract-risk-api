@@ -16,7 +16,19 @@ which wasn't usable — see git history for that abandoned integration).
 
 ## Browser UI
 
-`GET /` serves a self-contained page that lets a human pay for a scan with a
+**The UI lives at `/app`.** `GET /` returns Vercel's
+`FUNCTION_INVOCATION_FAILED` no matter what the function does, so `vercel.json`
+redirects `/` → `/app` rather than trying to serve the root.
+
+That wasn't a guess: `/app` serves the identical page from the identical
+handler and works, while `/` fails. The crash is also unreachable from
+Express — the route is wrapped in try/catch and the global error handler is
+confirmed live in production (a malformed-JSON POST returns its JSON, not
+Vercel's error page) — and `/` works locally under Node 18 and 22, via
+`src/server.js` and via `api/index.js` invoked the way Vercel invokes it. So
+it is the platform's root-path routing, not this code.
+
+`/app` serves a self-contained page that lets a human pay for a scan with a
 browser wallet — connect, sign, read the result — with no tooling. It
 implements the x402 "exact" EVM scheme by hand against `window.ethereum`
 (the client SDKs assume a bundler, which this deploy target doesn't have),
@@ -33,10 +45,16 @@ The page is served from a JS module rather than a static file because files
 read from disk at request time aren't reliably included in Vercel's function
 bundle, while an imported module always is.
 
+`test/ui.test.js` runs the page's real inline script under a DOM stub and
+drives a scan with a stubbed fetch, covering the render path. It exists
+because the first version shipped `[object Object]` for every flag — flags are
+`{label, weight}` objects, and generating the HTML server-side never exercised
+the client-side code that consumes them.
+
 **Not verified:** the wallet interaction itself (connect / network switch /
 signing prompt) needs a real browser with an injected wallet, which can't be
-exercised headlessly here. The payment payload it builds is verified; the
-wallet plumbing around it is not.
+exercised headlessly here. The payment payload it builds is verified, and the
+render path is now tested; the wallet plumbing between them is not.
 
 CORS is open (`Access-Control-Allow-Origin: *`) and exposes
 `PAYMENT-REQUIRED` / `PAYMENT-RESPONSE` while allowing `PAYMENT-SIGNATURE`,

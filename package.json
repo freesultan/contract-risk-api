@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test test/heuristics.test.js",
+    "test": "node --test test/",
     "pay:scan": "node scripts/pay-and-scan.js"
   },
   "engines": {
