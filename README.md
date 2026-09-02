@@ -123,16 +123,33 @@ Given that, **use a burner wallet** funded with a few cents rather than a
 main wallet. That caps total exposure at the balance regardless of any
 supply-chain assumption about the `@x402/*` packages.
 
-## Known limitation (cold-start 502)
+## Fixed: the cold-start 502
 
-One observed request to the deployed `/scan` returned
-`502 {"error":"Facilitator supported request timed out after 30000ms"}` —
-the resource server's call to the facilitator's `/supported` endpoint
-exceeded its 30s budget on a cold start. It did not reproduce (6/6
-subsequent probes returned a normal 402 in <1.2s, and the facilitator's
-`/supported` answers in ~1s when called directly), so this looks like a
-cold-start race rather than a facilitator outage. Worth watching: a paying
-agent that hits a cold instance could see a 502 instead of a 402.
+Paid routes intermittently returned
+`502 {"error":"Facilitator supported request timed out after 30000ms"}`,
+costing roughly one request per cold instance. Not a facilitator outage —
+`/supported` answers in ~1s when called directly.
+
+The tell was that **the 502 came back in 0.97s while claiming a 30s timeout**,
+which is impossible for a live timeout and means the error was cached.
+
+`@x402/express`'s `paymentMiddleware` calls `initialize()` at module load and
+memoizes the promise. On a serverless host the instance is frozen between
+invocations, so that fetch is suspended while its 30s abort timer keeps
+running in wall-clock time. It rejects unseen, and the next request to that
+instance is handed the already-rejected promise instantly. (The SDK does clear
+the promise and retry afterwards — which is why the failure looked
+intermittent, and why only the first request to each poisoned instance died.)
+
+The fix passes `syncFacilitatorOnStart: false` to disable that module-load
+call, and initializes lazily inside a request instead — where the instance is
+awake — retrying rather than caching a failure, and returning a 503 with a
+retry hint if it fails twice. Only `POST` to a scan path initializes, so the
+UI and `/health` never wait on the facilitator. Measured locally: first paid
+request 1.4s, subsequent ones ~2ms, `/health` and `/app` unaffected at <10ms.
+
+`test/initializer.test.js` covers the retry, the single-initialization
+guarantee, and concurrent callers sharing one in-flight attempt.
 
 ## Demo addresses (verified against live mainnet)
 

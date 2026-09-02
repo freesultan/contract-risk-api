@@ -76,6 +76,49 @@ const SCAN_TAGS = [
   "trading",
 ];
 
+/**
+ * Lazily initializes the resource server, retrying on failure.
+ *
+ * `paymentMiddleware` otherwise fires `initialize()` at module load and
+ * memoizes the promise. On a serverless host that is a trap: the instance is
+ * frozen between invocations, so a fetch started during module load can be
+ * suspended while its 30s abort timer keeps running in wall-clock time. It
+ * rejects unseen, and the next request to that instance gets the already-
+ * rejected promise back — which is why the failure returns
+ * "timed out after 30000ms" in under a second, a timing that is impossible for
+ * a real timeout.
+ *
+ * Initializing inside a request instead means the fetch runs while the
+ * instance is actually awake, and a failure is retried rather than cached.
+ *
+ * Exported for tests.
+ *
+ * @param {{initialize: () => Promise<unknown>}} server - resource server to initialize
+ * @returns {() => Promise<void>} idempotent initializer that retries after a failure
+ */
+export function createInitializer(server) {
+  let pending = null;
+  let done = false;
+  return async function ensureInitialized() {
+    if (done) return;
+    if (!pending) {
+      // Drop the promise on rejection so the next call retries rather than
+      // handing back the same failure forever.
+      pending = server.initialize().then(
+        () => {
+          done = true;
+          pending = null;
+        },
+        (err) => {
+          pending = null;
+          throw err;
+        }
+      );
+    }
+    await pending;
+  };
+}
+
 export function getScanTerms() {
   return {
     price: process.env.PRICE_PER_SCAN || "$0.02",
@@ -160,9 +203,37 @@ export async function buildPaymentMiddleware() {
     SCAN_PATHS.map((p) => [`POST ${p}`, routeConfig])
   );
 
+  // The trailing `false` disables the module-load `initialize()` — see
+  // createInitializer above for why that eager call is unsafe on serverless.
+  // With it off, the middleware never initializes on its own, so we own that.
+  const gate = paymentMiddleware(routes, resourceServer, undefined, undefined, false);
+  const ensureInitialized = createInitializer(resourceServer);
+  const paidPaths = new Set(SCAN_PATHS);
+
   return {
     enabled: true,
-    middleware: paymentMiddleware(routes, resourceServer),
+    middleware: async (req, res, next) => {
+      // Only paid routes need the facilitator, so the UI and /health never pay
+      // for a round trip to it.
+      if (req.method !== "POST" || !paidPaths.has(req.path)) return next();
+
+      try {
+        await ensureInitialized();
+      } catch (first) {
+        try {
+          // A cold instance's first attempt can fail on a transient network
+          // hiccup; one immediate retry is enough to cover it.
+          await ensureInitialized();
+        } catch (second) {
+          console.error("Facilitator initialization failed twice:", second);
+          return res.status(503).json({
+            error: "Payment facilitator unavailable, please retry",
+            detail: second && second.message ? second.message : String(second),
+          });
+        }
+      }
+      return gate(req, res, next);
+    },
   };
 }
 
