@@ -237,7 +237,7 @@ export function buildUiHtml(scanPath = CANONICAL_SCAN_PATH) {
 
   $("addr").value = CFG.exampleAddress;
   $("terms").textContent = CFG.enabled
-    ? "Each scan costs " + CFG.price + " in USDC on Base (x402). Paid peer-to-peer to " + CFG.payTo + " \\u2014 no account, no signup."
+    ? "Each scan costs " + CFG.price + " in USDC on Base (x402). Paid peer-to-peer to the developer \\u2014 no account, no signup."
     : "Running in free/test mode \\u2014 no payment required.";
 
   function status(msg, isErr) {
