@@ -4,7 +4,7 @@ On-chain contract risk-score API. POST an address, get back a heuristic risk
 signal (upgradeable-proxy detection + privileged-function detection) for
 trading bots, wallets, and agents doing pre-trade safety checks.
 
-**Live**: https://contract-risk-api-six.vercel.app
+**Live**: https://smartcontractrisk.0xhodhod.xyz
 
 Monetization: standard x402 ("exact" scheme) via **PayAI's facilitator**
 (facilitator.payai.network, free tier, no signup). Settlement is
@@ -83,11 +83,11 @@ PayAI's own reference merchant does the same.
 ## How to verify it's actually working
 
 ```bash
-curl -s https://contract-risk-api-six.vercel.app/health
+curl -s https://smartcontractrisk.0xhodhod.xyz/health
 
 # Use a demo address that actually trips the heuristic (see "Demo addresses"
 # below) — the old USDC example returns an empty result and looks broken.
-curl -s -i -X POST https://contract-risk-api-six.vercel.app/v1/scan \
+curl -s -i -X POST https://smartcontractrisk.0xhodhod.xyz/v1/scan \
   -H "Content-Type: application/json" \
   -d '{"address":"0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599","chain":"ethereum"}'
 # expect 402 with a payment-required header when ENABLE_PAYMENTS=true;
@@ -241,12 +241,12 @@ server (`ENABLE_PAYMENTS` unset), or pay them for real with
 
 ```bash
 # Highest-signal demo: WBTC, four privileged-function flags
-curl -s -X POST https://contract-risk-api-six.vercel.app/v1/scan \
+curl -s -X POST https://smartcontractrisk.0xhodhod.xyz/v1/scan \
   -H "Content-Type: application/json" \
   -d '{"address":"0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599","chain":"ethereum"}'
 
 # Proxy detection on Base
-curl -s -X POST https://contract-risk-api-six.vercel.app/v1/scan \
+curl -s -X POST https://smartcontractrisk.0xhodhod.xyz/v1/scan \
   -H "Content-Type: application/json" \
   -d '{"address":"0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA","chain":"base"}'
 ```
