@@ -30,7 +30,7 @@ import { privateKeyToAccount } from "viem/accounts";
 
 const {
   PAYER_PRIVATE_KEY,
-  SCAN_API_URL = "https://contract-risk-api-six.vercel.app/v1/scan",
+  SCAN_API_URL = "https://smartcontractrisk.0xhodhod.xyz/v1/scan",
   // WBTC — the highest-signal demo (high risk, four flags). It only exists on
   // Ethereum: the same address on Base has no code and returns
   // riskLevel "unknown", so SCAN_CHAIN must match the address being scanned.
