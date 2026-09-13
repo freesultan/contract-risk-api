@@ -44,23 +44,7 @@ burning real settlements.
 The page is served from a JS module rather than a static file because files
 read from disk at request time aren't reliably included in Vercel's function
 bundle, while an imported module always is.
-
-`test/ui.test.js` runs the page's real inline script under a DOM stub and
-drives a scan with a stubbed fetch, covering the render path. It exists
-because the first version shipped `[object Object]` for every flag — flags are
-`{label, weight}` objects, and generating the HTML server-side never exercised
-the client-side code that consumes them.
-
-**Not verified:** the wallet interaction itself (connect / network switch /
-signing prompt) needs a real browser with an injected wallet, which can't be
-exercised headlessly here. The payment payload it builds is verified, and the
-render path is now tested; the wallet plumbing between them is not.
-
-CORS is open (`Access-Control-Allow-Origin: *`) and exposes
-`PAYMENT-REQUIRED` / `PAYMENT-RESPONSE` while allowing `PAYMENT-SIGNATURE`,
-so the API is payable from a browser page on *any* origin, not just this one
-— non-safelisted response headers are invisible to cross-origin JS otherwise.
-PayAI's own reference merchant does the same.
+ 
 
 ## What's built
 
@@ -96,60 +80,7 @@ curl -s -i -X POST https://smartcontractrisk.0xhodhod.xyz/v1/scan \
 # matches your wallet.
 ```
 
-## Safety of `pay:scan` (it signs a real transfer)
 
-The script signs automatically, with no interactive confirmation, so what
-bounds the damage is worth stating explicitly:
-
-- **The key never leaves the machine.** It goes to viem's
-  `privateKeyToAccount` and then to `@x402/evm`'s signer, which contains no
-  `fetch` calls and no URLs anywhere in its 56 dist files. The only outbound
-  request is to `SCAN_API_URL`. The script prints the derived address, never
-  the key. `.env` is gitignored (verified with `git check-ignore`).
-- **An EIP-3009 authorization is narrow**: it commits to one exact amount,
-  one exact recipient, a random nonce, and an expiry. It is not an allowance
-  and cannot be replayed for more.
-- **There is a per-payment spend cap.** The SDK defaults to `$1`; this script
-  pins it explicitly to `$0.05` (`MAX_PAYMENT`), verified both ways — a
-  hostile server demanding `$0.99` gets refused with nothing signed, while
-  the real `$0.001` route still pays.
-
-Residual risk: anything **at or under the cap** is signed with no prompt, so
-a wrong or tampered `SCAN_API_URL` could pay a stranger up to `MAX_PAYMENT`.
-Note also that `@x402/fetch` re-signs a second authorization (fresh nonce) on
-its internal `recovered` retry path, so budget worst case as 2× the cap.
-
-Given that, **use a burner wallet** funded with a few cents rather than a
-main wallet. That caps total exposure at the balance regardless of any
-supply-chain assumption about the `@x402/*` packages.
-
-## Fixed: the cold-start 502
-
-Paid routes intermittently returned
-`502 {"error":"Facilitator supported request timed out after 30000ms"}`,
-costing roughly one request per cold instance. Not a facilitator outage —
-`/supported` answers in ~1s when called directly.
-
-The tell was that **the 502 came back in 0.97s while claiming a 30s timeout**,
-which is impossible for a live timeout and means the error was cached.
-
-`@x402/express`'s `paymentMiddleware` calls `initialize()` at module load and
-memoizes the promise. On a serverless host the instance is frozen between
-invocations, so that fetch is suspended while its 30s abort timer keeps
-running in wall-clock time. It rejects unseen, and the next request to that
-instance is handed the already-rejected promise instantly. (The SDK does clear
-the promise and retry afterwards — which is why the failure looked
-intermittent, and why only the first request to each poisoned instance died.)
-
-The fix passes `syncFacilitatorOnStart: false` to disable that module-load
-call, and initializes lazily inside a request instead — where the instance is
-awake — retrying rather than caching a failure, and returning a 503 with a
-retry hint if it fails twice. Only `POST` to a scan path initializes, so the
-UI and `/health` never wait on the facilitator. Measured locally: first paid
-request 1.4s, subsequent ones ~2ms, `/health` and `/app` unaffected at <10ms.
-
-`test/initializer.test.js` covers the retry, the single-initialization
-guarantee, and concurrent callers sharing one in-flight attempt.
 
 ## Understanding the response
 
@@ -316,98 +247,9 @@ CDP-run x402 Bazaar only indexes CDP-facilitator traffic, so it won't
 auto-list us — but PayAI runs its own equivalent discovery catalog at
 `GET https://facilitator.payai.network/discovery/resources`, and it's tied
 directly to the facilitator we already use.
+ 
 
-The route is **live in that catalog** as of 2026-09-01, with the correct
-description, price, payTo and input/output schema.
 
-### The catalog row's metadata is write-once (`serviceName`/`tags` are null)
-
-`serviceName`, `tags` and `iconUrl` are `RouteConfig` fields rather than
-discovery-extension ones, so the first deploy didn't send them and the row
-was indexed with them `null`. They are now emitted — but **the row still
-shows null, and re-paying does not fix it.** Established by testing, not
-assumption:
-
-- The live 402's `resource` object now carries `serviceName` and `tags`, and
-  a capture of the client's `PAYMENT-SIGNATURE` payload (replaying the real
-  live 402 against a local relay) confirms both survive into what is sent to
-  the facilitator, alongside the `bazaar` extension. Our side is correct.
-- A second payment settled successfully (tx `0xb4804de7…03f9`, payout wallet
-  now 0.002 USDC). PayAI counted it —
-  `/discovery/resources/<urlencoded>/stats` reports 2 settlements — but the
-  catalog row's `lastUpdated` stayed frozen at the first settlement and the
-  fields stayed null. **So don't re-pay hoping to refresh metadata.**
-- Their OpenAPI (`/openapi.json`) exposes no register/refresh endpoint, and
-  `/discovery/resources` accepts only `limit` and `offset` — the `?payTo=`
-  filter mentioned in the generic x402 docs is not implemented here.
-
-The x402 docs state catalog behaviour is "an implementation detail of the
-facilitator operator". So the options are: ask PayAI to re-index
-(info@payai.network), or force a fresh row by serving the route at a new
-resource URL and paying once — which works because rows are created per URL,
-but leaves the old null-metadata row behind.
-
-**We tried the new-URL route, and it did not work.** The scan is served at
-both `/scan` and `/v1/scan` with identical terms (`SCAN_PATHS` in
-`src/payment.js`), and a payment was settled against `/v1/scan` on
-2026-09-01 (tx `0xbb2fef50…c1c7`). PayAI created a second catalog row within a
-minute — total went 27,947 → 27,948 — and that brand-new row **also came back
-with `serviceName: null` and `tags: null`**, despite being created from a
-payload that provably carries both.
-
-So the earlier "rows are write-once" theory was wrong. The actual behaviour is
-simpler and worse: **PayAI's indexer does not ingest `serviceName`/`tags` at
-all**, on creation or update. Nothing on the resource-server side can change
-that — the fields are sent correctly and verifiably (see the capture note
-above), and they are dropped downstream.
-
-That leaves emailing info@payai.network as the only remaining option. Don't
-spend more settlements on this; three have now been spent establishing it.
-
-The dual path is kept anyway: `/v1/scan` is a cleaner canonical URL for the
-manifest, `llms.txt` and the UI, and `/scan` keeps working for the existing
-listing and any agent already on it.
-
-This is polish, not a blocker: `description` — the main thing agents and LLMs
-rank on — is populated and correct.
-
-`POST /scan`'s route config in `src/payment.js` declares a Bazaar discovery
-extension (`@x402/extensions/bazaar`'s `declareDiscoveryExtension`) with a
-description, example input/output, and a JSON Schema for the body.
-`@x402/express`'s `paymentMiddleware` auto-registers this with the resource
-server — no extra wiring needed. Once the route has settled **one real
-payment**, PayAI indexes it in `/discovery/resources` automatically (an
-empty `declareDiscoveryExtension({})` is enough to qualify; richer metadata
-just helps agents/LLMs decide to call it).
-
-To actually go live and start earning:
-
-1. Set `EVM_ADDRESS` (your payout wallet) and `ENABLE_PAYMENTS=true` in the
-   Vercel project's environment variables, then redeploy. **Done** — live in
-   paid mode as of this writing.
-2. Drive one real settled payment against `/scan` to trigger the Bazaar
-   listing. **Done — 2026-09-01.** Settled on Base in tx
-   `0xf879c81db44142a33defda343f1f0f931cc066f2a2791c491093ce56eb51b054`
-   (block 50740559): 0.001 USDC from a burner wallet to the payout address,
-   gas paid by the facilitator. PayAI indexed `/scan` into
-   `/discovery/resources` within minutes — the catalog went from 27,946 to
-   27,947 entries with this route as the newest.
-
-   `scripts/pay-and-scan.js` does this: set `PAYER_PRIVATE_KEY` in
-   `.env` to a wallet holding a little **USDC on Base** (network
-   `eip155:8453` — USDC on another chain, e.g. Polygon or zkSync Era, is a
-   different asset and can't pay this route as configured), then
-   `npm run pay:scan`. The x402 "exact" EVM scheme signs an EIP-3009
-   authorization — gasless for the payer, no prior approval transaction —
-   so the actual cost is exactly `PRICE_PER_SCAN` (currently $0.001), with
-   the facilitator covering gas. Self-paying (same wallet as `EVM_ADDRESS`)
-   works too and nets to ~$0 since the funds return to the same address; you
-   just need that wallet to already hold at least `PRICE_PER_SCAN` in Base
-   USDC to sign the authorization against.
-3. Optionally also submit the endpoint to independent aggregators that
-   aren't facilitator-specific, e.g. https://x402all.com (manual "Register
-   your origin" submission) — worth rechecking periodically since this
-   space is adding directories fast.
 
 A third, facilitator-independent discovery surface is also served directly
 by this app (`src/discovery.js`, generated from the same terms as the live
