@@ -3,9 +3,18 @@ import express from "express";
 import { fetchOnChainData, DEFAULT_RPC_URLS } from "./chain.js";
 import { analyzeBytecode } from "./heuristics.js";
 import { logUsage } from "./logger.js";
-import { buildPaymentMiddleware, logRequestMode, SCAN_PATHS } from "./payment.js";
+import {
+  buildPaymentMiddleware,
+  logRequestMode,
+  SCAN_PATHS,
+  ALERT_PATHS,
+  FULLCHECK_PATHS,
+} from "./payment.js";
 import { buildX402Manifest, buildLlmsTxt } from "./discovery.js";
 import { buildUiHtml } from "./ui.js";
+import { searchChannels } from "./telegram.js";
+import { summarize } from "./categorize.js";
+import { TRACKED_CHANNELS } from "./channels.js";
 
 const app = express();
 // Vercel terminates TLS upstream and forwards over plain HTTP with
@@ -76,6 +85,10 @@ app.get("/llms.txt", (req, res) => {
   res.type("text/plain").send(buildLlmsTxt(baseUrl));
 });
 
+// ---------------------------------------------------------------------------
+// Paid routes
+// ---------------------------------------------------------------------------
+
 app.post(SCAN_PATHS, async (req, res) => {
   const { address, chain = "base" } = req.body || {};
   const startedAt = Date.now();
@@ -88,8 +101,6 @@ app.post(SCAN_PATHS, async (req, res) => {
     const { bytecode, implementationSlotValue } = await fetchOnChainData(address, chain);
     const result = analyzeBytecode({ bytecode, implementationSlotValue });
 
-    // Best-effort local log (not durable on serverless — the facilitator and
-    // the chain are the authoritative record of paid usage).
     logUsage({
       route: req.path,
       address,
@@ -101,6 +112,86 @@ app.post(SCAN_PATHS, async (req, res) => {
     });
 
     res.json({ address, chain, ...result });
+  } catch (err) {
+    logUsage({
+      route: req.path,
+      address,
+      chain,
+      paymentMode: res.locals.paymentMode,
+      error: err.message,
+      latencyMs: Date.now() - startedAt,
+    });
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post(ALERT_PATHS, async (req, res) => {
+  const { address, chain = "base" } = req.body || {};
+  const startedAt = Date.now();
+
+  if (!address) {
+    return res.status(400).json({ error: "Missing required field: address" });
+  }
+
+  try {
+    const hits = await searchChannels(address, TRACKED_CHANNELS);
+    const result = summarize(hits);
+
+    logUsage({
+      route: req.path,
+      address,
+      chain,
+      paymentMode: res.locals.paymentMode,
+      alertMentions: result.alertMentions,
+      latencyMs: Date.now() - startedAt,
+    });
+
+    res.json({ query: address, chain, ...result });
+  } catch (err) {
+    logUsage({
+      route: req.path,
+      address,
+      chain,
+      paymentMode: res.locals.paymentMode,
+      error: err.message,
+      latencyMs: Date.now() - startedAt,
+    });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post(FULLCHECK_PATHS, async (req, res) => {
+  const { address, chain = "base" } = req.body || {};
+  const startedAt = Date.now();
+
+  if (!address) {
+    return res.status(400).json({ error: "Missing required field: address" });
+  }
+
+  try {
+    // Both branches are independent, so run them together. The alert branch
+    // never rejects on a per-channel failure (searchChannels catches and
+    // skips channels), so a partial scrape still yields a usable response.
+    const [onChain, hits] = await Promise.all([
+      fetchOnChainData(address, chain),
+      searchChannels(address, TRACKED_CHANNELS),
+    ]);
+
+    const risk = analyzeBytecode(onChain);
+    const alerts = summarize(hits);
+
+    logUsage({
+      route: req.path,
+      address,
+      chain,
+      paymentMode: res.locals.paymentMode,
+      riskLevel: risk.riskLevel,
+      riskScore: risk.riskScore,
+      alertMentions: alerts.alertMentions,
+      latencyMs: Date.now() - startedAt,
+    });
+
+    res.json({ address, chain, risk, alerts });
   } catch (err) {
     logUsage({
       route: req.path,

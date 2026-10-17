@@ -18,63 +18,147 @@ import { logUsage } from "./logger.js";
 const ENABLED = String(process.env.ENABLE_PAYMENTS).toLowerCase() === "true";
 const NETWORK = process.env.X402_NETWORK || "eip155:8453"; // Base mainnet
 
-// Single source of truth for /scan's terms, shared by the live x402 payment
-// route (via declareDiscoveryExtension, once ENABLE_PAYMENTS=true) and the
-// static /.well-known/x402 + /llms.txt discovery surfaces (src/discovery.js),
-// so price/description/schema can't drift between the two.
+// ---------------------------------------------------------------------------
+// Paths — the single source of truth, shared by app.js (route registration),
+// discovery.js (manifest + llms.txt) and the middleware below.
+// ---------------------------------------------------------------------------
+
+// SCAN_PATHS: /scan is the original route; /v1/scan is the versioned alias.
+// Both are listed because catalog rows are keyed by URL and never re-read
+// metadata, so a fresh URL is how updated serviceName/tags land.
+export const SCAN_PATHS = ["/scan", "/v1/scan"];
+export const ALERT_PATHS = ["/v1/alert-check"];
+export const FULLCHECK_PATHS = ["/v1/full-check"];
+
+export const CANONICAL_SCAN_PATH = SCAN_PATHS[SCAN_PATHS.length - 1];
+export const CANONICAL_ALERT_PATH = ALERT_PATHS[ALERT_PATHS.length - 1];
+export const CANONICAL_FULLCHECK_PATH = FULLCHECK_PATHS[FULLCHECK_PATHS.length - 1];
+
+// ---------------------------------------------------------------------------
+// Per-route terms
+// ---------------------------------------------------------------------------
+
+// ---- Scan ----
 const SCAN_DESCRIPTION =
   "On-chain contract risk score: detects upgradeable proxies and privileged functions from live bytecode. Use before trading/interacting with an unfamiliar contract.";
 
 const SCAN_INPUT_SCHEMA = {
   properties: {
-    address: {
-      type: "string",
-      description: "0x-prefixed EVM contract address to scan",
-    },
-    chain: {
-      type: "string",
-      enum: ["base", "ethereum"],
-      description: "Chain to query (default: base)",
-    },
+    address: { type: "string", description: "0x-prefixed EVM contract address to scan" },
+    chain: { type: "string", enum: ["base", "ethereum"], description: "Chain to query (default: base)" },
   },
   required: ["address"],
 };
 
-const SCAN_EXAMPLE_INPUT = {
-  address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-  chain: "base",
-};
-
-const SCAN_EXAMPLE_OUTPUT = {
-  ...SCAN_EXAMPLE_INPUT,
-  riskLevel: "low",
-  riskScore: 0,
-};
-
-// Service-level metadata for the Bazaar catalog. These are `RouteConfig`
-// fields (not part of the discovery extension), and without them the catalog
-// entry carries `serviceName: null` / `tags: null` — which is what agents and
-// LLMs filter and rank on when choosing between ~28k listed resources.
+const SCAN_EXAMPLE_INPUT = { address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", chain: "base" };
+const SCAN_EXAMPLE_OUTPUT = { ...SCAN_EXAMPLE_INPUT, riskLevel: "low", riskScore: 0 };
 const SCAN_SERVICE_NAME = "Contract Risk API";
+const SCAN_TAGS = ["security", "risk-analysis", "smart-contracts", "evm", "base", "ethereum", "defi", "trading"];
 
-// Paths the scan route is served at. The catalog keys rows by resource URL and
-// never re-reads metadata for a row it already has, so the versioned alias is
-// how a listing with serviceName/tags gets created (see README). Order matters:
-// the first entry is the original, still-indexed URL; the last is canonical for
-// new discovery surfaces.
-export const SCAN_PATHS = ["/scan", "/v1/scan"];
-export const CANONICAL_SCAN_PATH = SCAN_PATHS[SCAN_PATHS.length - 1];
+// ---- Alert-channel monitor ----
+const ALERT_DESCRIPTION =
+  "Telegram alert-channel monitoring for a contract address or ticker: returns mention volume across tracked crypto channels, categorized into security alerts, whale movements, and listing/news. Use alongside an on-chain risk scan — a contract with a high risk score that is also being flagged by a security channel is a materially different signal.";
 
-const SCAN_TAGS = [
-  "security",
-  "risk-analysis",
-  "smart-contracts",
-  "evm",
-  "base",
-  "ethereum",
-  "defi",
-  "trading",
+const ALERT_INPUT_SCHEMA = {
+  properties: {
+    address: { type: "string", description: "Contract address or search term (e.g. a ticker like USDC)" },
+    chain: { type: "string", enum: ["base", "ethereum"], description: "Chain hint (default: base)" },
+  },
+  required: ["address"],
+};
+
+const ALERT_EXAMPLE_INPUT = { address: "USDC", chain: "base" };
+const ALERT_EXAMPLE_OUTPUT = {
+  query: "USDC",
+  chain: "base",
+  alertMentions: 14,
+  categories: { securityAlert: 0, whaleMovement: 14, listing: 0, other: 0 },
+  channels: ["whale_alert", "whale_alert_io"],
+  lastCheckedAt: "2026-10-14T12:19:44.073Z",
+};
+const ALERT_SERVICE_NAME = "Alert-Channel Monitor";
+const ALERT_TAGS = [
+  "security", "risk-analysis", "smart-contracts", "evm", "base", "ethereum",
+  "defi", "trading", "telegram", "alerts", "sentiment", "social",
 ];
+
+// ---- Full check (both) ----
+const FULLCHECK_DESCRIPTION =
+  "Combined pre-trade safety check: on-chain risk score (proxy + privileged-function detection from live bytecode) plus Telegram alert-channel monitoring, in one call. Cheaper than calling /v1/scan and /v1/alert-check separately, and the two signals are worth more together — a contract with privileged functions that is also being flagged in a security channel is a different situation than either signal alone.";
+
+const FULLCHECK_INPUT_SCHEMA = SCAN_INPUT_SCHEMA;
+const FULLCHECK_EXAMPLE_INPUT = { address: "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA", chain: "base" };
+const FULLCHECK_EXAMPLE_OUTPUT = {
+  address: FULLCHECK_EXAMPLE_INPUT.address,
+  chain: "base",
+  risk: {
+    isContract: true, isProxy: true,
+    flags: [{ label: "upgradeable proxy (EIP-1967) — logic can be swapped by admin", weight: 10 }],
+    riskScore: 10, riskLevel: "medium",
+  },
+  alerts: {
+    alertMentions: 0,
+    categories: { securityAlert: 0, whaleMovement: 0, listing: 0, other: 0 },
+    channels: [],
+    note: "No mentions in the current rolling window. Absence of alerts is not a safety guarantee.",
+  },
+};
+const FULLCHECK_SERVICE_NAME = "Contract Pre-Trade Check";
+const FULLCHECK_TAGS = [
+  "security", "risk-analysis", "smart-contracts", "evm", "base", "ethereum",
+  "defi", "trading", "telegram", "alerts", "sentiment", "social",
+  "pre-trade", "agent-safety",
+];
+
+// ---------------------------------------------------------------------------
+// Public term builders (used by discovery.js and app.js)
+// ---------------------------------------------------------------------------
+
+export function getScanTerms() {
+  return {
+    price: process.env.PRICE_PER_SCAN || "$0.02",
+    network: NETWORK,
+    payTo: process.env.EVM_ADDRESS || null,
+    description: SCAN_DESCRIPTION,
+    serviceName: SCAN_SERVICE_NAME,
+    tags: SCAN_TAGS,
+    inputSchema: SCAN_INPUT_SCHEMA,
+    exampleInput: SCAN_EXAMPLE_INPUT,
+    exampleOutput: SCAN_EXAMPLE_OUTPUT,
+  };
+}
+
+export function getAlertTerms() {
+  return {
+    price: process.env.PRICE_PER_ALERT || "$0.03",
+    network: NETWORK,
+    payTo: process.env.EVM_ADDRESS || null,
+    description: ALERT_DESCRIPTION,
+    serviceName: ALERT_SERVICE_NAME,
+    tags: ALERT_TAGS,
+    inputSchema: ALERT_INPUT_SCHEMA,
+    exampleInput: ALERT_EXAMPLE_INPUT,
+    exampleOutput: ALERT_EXAMPLE_OUTPUT,
+  };
+}
+
+export function getFullCheckTerms() {
+  return {
+    price: process.env.PRICE_PER_FULLCHECK || "$0.05",
+    network: NETWORK,
+    payTo: process.env.EVM_ADDRESS || null,
+    description: FULLCHECK_DESCRIPTION,
+    serviceName: FULLCHECK_SERVICE_NAME,
+    tags: FULLCHECK_TAGS,
+    inputSchema: FULLCHECK_INPUT_SCHEMA,
+    exampleInput: FULLCHECK_EXAMPLE_INPUT,
+    exampleOutput: FULLCHECK_EXAMPLE_OUTPUT,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Middleware
+// ---------------------------------------------------------------------------
 
 /**
  * Lazily initializes the resource server, retrying on failure.
@@ -102,47 +186,24 @@ export function createInitializer(server) {
   return async function ensureInitialized() {
     if (done) return;
     if (!pending) {
-      // Drop the promise on rejection so the next call retries rather than
-      // handing back the same failure forever.
       pending = server.initialize().then(
-        () => {
-          done = true;
-          pending = null;
-        },
-        (err) => {
-          pending = null;
-          throw err;
-        }
+        () => { done = true; pending = null; },
+        (err) => { pending = null; throw err; }
       );
     }
     await pending;
   };
 }
 
-export function getScanTerms() {
-  return {
-    price: process.env.PRICE_PER_SCAN || "$0.02",
-    network: NETWORK,
-    payTo: process.env.EVM_ADDRESS || null,
-    description: SCAN_DESCRIPTION,
-    serviceName: SCAN_SERVICE_NAME,
-    tags: SCAN_TAGS,
-    inputSchema: SCAN_INPUT_SCHEMA,
-    exampleInput: SCAN_EXAMPLE_INPUT,
-    exampleOutput: SCAN_EXAMPLE_OUTPUT,
-  };
-}
-
 export async function buildPaymentMiddleware() {
   if (!ENABLED) {
-    return {
-      enabled: false,
-      middleware: (req, res, next) => next(),
-    };
+    return { enabled: false, middleware: (req, res, next) => next() };
   }
 
-  const terms = getScanTerms();
-  if (!terms.payTo) {
+  const scanTerms = getScanTerms();
+  const alertTerms = getAlertTerms();
+  const fullTerms = getFullCheckTerms();
+  if (!scanTerms.payTo) {
     throw new Error("ENABLE_PAYMENTS=true requires EVM_ADDRESS to be set.");
   }
 
@@ -158,71 +219,61 @@ export async function buildPaymentMiddleware() {
     new ExactEvmScheme()
   );
 
-  const routeConfig = {
-    accepts: [
-      { scheme: "exact", price: terms.price, network: terms.network, payTo: terms.payTo },
-    ],
+  // One route config builder, three callers. The unpaidResponseBody / accepts
+  // shape is identical across routes — only the price, description and
+  // discovery metadata differ.
+  const makeConfig = (terms) => ({
+    accepts: [{ scheme: "exact", price: terms.price, network: terms.network, payTo: terms.payTo }],
     description: terms.description,
     serviceName: terms.serviceName,
     tags: terms.tags,
-    // Bazaar discovery metadata: `@x402/express` auto-registers this with the
-    // facilitator's resource server, and PayAI indexes it at
-    // GET /discovery/resources after the route's first real settled payment.
     extensions: declareDiscoveryExtension({
       bodyType: "json",
       input: terms.exampleInput,
       inputSchema: terms.inputSchema,
       output: { example: terms.exampleOutput },
     }),
-    // Echo the terms in the 402 body as well as the PAYMENT-REQUIRED header.
-    // The header is canonical, but a cross-origin browser client can only read
-    // it when CORS exposes it, and the body always survives — PayAI's own
-    // reference merchant does the same.
     unpaidResponseBody: () => ({
       contentType: "application/json",
       body: {
         x402Version: 2,
         error: "PAYMENT-SIGNATURE header is required",
-        accepts: [
-          {
-            scheme: "exact",
-            network: terms.network,
-            payTo: terms.payTo,
-            price: terms.price,
-            description: terms.description,
-          },
-        ],
+        accepts: [{
+          scheme: "exact",
+          network: terms.network,
+          payTo: terms.payTo,
+          price: terms.price,
+          description: terms.description,
+        }],
       },
     }),
+  });
+
+  const scanConfig = makeConfig(scanTerms);
+  const alertConfig = makeConfig(alertTerms);
+  const fullConfig = makeConfig(fullTerms);
+
+  const routes = {
+    ...Object.fromEntries(SCAN_PATHS.map((p) => [`POST ${p}`, scanConfig])),
+    ...Object.fromEntries(ALERT_PATHS.map((p) => [`POST ${p}`, alertConfig])),
+    ...Object.fromEntries(FULLCHECK_PATHS.map((p) => [`POST ${p}`, fullConfig])),
   };
 
-  // Both paths serve the same route. SCAN_PATHS[0] stays for the agents and
-  // catalog entry that already know it; the versioned alias is a distinct
-  // resource URL, which is what earns a fresh Bazaar row (see README).
-  const routes = Object.fromEntries(
-    SCAN_PATHS.map((p) => [`POST ${p}`, routeConfig])
-  );
-
-  // The trailing `false` disables the module-load `initialize()` — see
+  // Trailing `false` disables the module-load initialize() — see
   // createInitializer above for why that eager call is unsafe on serverless.
-  // With it off, the middleware never initializes on its own, so we own that.
   const gate = paymentMiddleware(routes, resourceServer, undefined, undefined, false);
   const ensureInitialized = createInitializer(resourceServer);
-  const paidPaths = new Set(SCAN_PATHS);
+  const paidPaths = new Set([...SCAN_PATHS, ...ALERT_PATHS, ...FULLCHECK_PATHS]);
 
   return {
     enabled: true,
     middleware: async (req, res, next) => {
-      // Only paid routes need the facilitator, so the UI and /health never pay
-      // for a round trip to it.
       if (req.method !== "POST" || !paidPaths.has(req.path)) return next();
 
       try {
         await ensureInitialized();
       } catch (first) {
         try {
-          // A cold instance's first attempt can fail on a transient network
-          // hiccup; one immediate retry is enough to cover it.
           await ensureInitialized();
         } catch (second) {
           console.error("Facilitator initialization failed twice:", second);
