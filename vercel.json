@@ -2,6 +2,10 @@
   "redirects": [{ "source": "/", "destination": "/app", "permanent": false }],
   "rewrites": [
     { "source": "/", "destination": "/api" },
-    { "source": "/(.*)", "destination": "/api" }
+    { "source": "/(.*)", "destination": "/api" },
+    {
+      "source": "/favicon.ico",
+      "destination": "/api/index.js"
+    }
   ]
 }
