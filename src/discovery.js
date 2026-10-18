@@ -103,28 +103,45 @@ export function buildLlmsTxt(baseUrl) {
   const payToLine = payTo ? `, payTo ${payTo}` : " (payTo not yet configured)";
 
   const signingSection = signing
-    ? `## Verifying a paid response
+  ? `## Verifying a paid response
 
-Every 402 response carries signed offers in its extensions["offer-receipt"].info.offers
-array — one per accepted payment option, each committing to the scheme, network,
-amount and payTo for that option. Every 200 response carries a signed receipt in
-the PAYMENT-RESPONSE header's extensions["offer-receipt"].info.receipt, containing
-resourceUrl, payer, network, issuedAt, and the settlement txHash.
+Every 402 response carries a signed **offer** in
+extensions["offer-receipt"].info.offers — one per accepted payment option,
+each committing to resourceUrl, scheme, network, asset, payTo, amount and
+validUntil, signed with EIP-712.
 
-Signatures are EIP-712. To verify a receipt: recover the signer address from the
-signature and typed data, then compare it to the address published at
-${baseUrl}/.well-known/x402 -> signing.address (currently ${signing.address}).
+Every 200 response carries:
 
-What this proves: that this service, identified by ${signing.kid}, produced this
-response for this payer at this time. What it does NOT prove: that the underlying
-on-chain or Telegram data is correct. A signature answers "who said this, and
-when" — not "is it true". Treat it as a resolvable audit trail, not a safety score.
+1. A signed **receipt** in extensions["offer-receipt"].info.receipt — an
+   EIP-712 signature over { version, network, resourceUrl, payer, issuedAt }.
+   This proves which service produced the response, for which payer, at
+   what time.
+2. The **settlement transaction hash** at the TOP LEVEL of the same header
+   (fields: success, payer, transaction, network). This is the standard
+   x402 envelope, separate from the signed receipt.
+
+To verify end-to-end:
+
+a. Base64-decode the PAYMENT-RESPONSE header.
+b. Recover the EIP-712 signer from extensions["offer-receipt"].info.receipt
+   and compare to ${baseUrl}/.well-known/x402 -> signing.address
+   (currently ${signing.address}).
+c. Confirm the top-level "transaction" field exists on-chain (basescan),
+   from "payer" to the offer's payTo, in the offered amount.
+
+What this proves: the response was produced by this service, for this payer,
+at the stated time; and that settlement for that payer occurred on-chain at
+the stated transaction hash. What it does NOT prove: that the underlying
+on-chain or Telegram data is correct. A signature answers "who said this,
+and when" — not "is it true". Treat it as a resolvable audit trail, not a
+safety score.
 
 `
-    : `## Signed offers & receipts
+  : `## Signed offers & receipts
 Not active in free-test mode. Once ENABLE_PAYMENTS=true, every 402 carries a
-signed offer and every 200 a signed receipt (EIP-712), verifiable against the
-signing address published at ${baseUrl}/.well-known/x402.
+signed offer and every 200 a signed receipt (EIP-712), plus the settlement
+transaction hash in the same PAYMENT-RESPONSE envelope. Verify the signer
+against the address published at ${baseUrl}/.well-known/x402.
 
 `;
 

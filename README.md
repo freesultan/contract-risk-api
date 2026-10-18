@@ -301,31 +301,7 @@ Real responses (captured from the live heuristic, not illustrative):
   "riskLevel": "medium"
 }
 ```
-
-## Known limitation (proxy false negatives)
-
-**The proxy check only reads the EIP-1967 slot, so it misses proxies that use
-other slots — including USDC itself.** Confirmed on-chain: USDC on Base has an
-empty EIP-1967 slot but a populated legacy OpenZeppelin slot
-(`keccak256("org.zeppelinos.proxy.implementation")` →
-`0x2ce6311ddae708829bc0784c967b7d77d19fd779`). So the API currently reports
-`isProxy: false` for the most widely held stablecoin on both supported chains.
-Lido's stETH (an Aragon-style proxy) is missed too — none of the three common
-slots are populated for it.
-
-Fixing this means reading the legacy Zeppelin and EIP-1822 slots alongside
-EIP-1967. That is a small change, but it would flip existing answers (USDC
-would move from `low` to `medium`), so it is deliberately left as a decision
-rather than applied silently.
-
-## Known limitation (heuristic accuracy)
-
-Function-selector detection is a bytecode substring search for the standard
-`PUSH4 <selector>` dispatcher pattern. It can under-detect on heavily
-optimized/obfuscated bytecode (confirmed empirically: a real mainnet token
-contract returned zero flags in manual testing despite typically having
-privileged functions). This is a v0 heuristic, not a guarantee — worth
-tightening if the idea earns out.
+ 
 
 ## Distribution
 

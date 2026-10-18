@@ -306,13 +306,9 @@ export async function buildPaymentMiddleware() {
       }),
       // Signed offer (on 402) + signed receipt (on 200).
       //
-      // includeTxHash: true is deliberate. The default (false) protects payer
-      // privacy, but a settlement hash is already public on-chain — and for a
-      // service whose pitch is "verify, don't trust", a receipt the client can
-      // cross-check against basescan is worth far more than the marginal
-      // privacy it costs. The payer address is in the receipt either way.
+      
       ...declareOfferReceiptExtension({
-        includeTxHash: true,
+        
         offerValiditySeconds: 300,
       }),
     },

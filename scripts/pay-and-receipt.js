@@ -107,7 +107,14 @@ const resp = JSON.parse(Buffer.from(respB64, "base64").toString("utf8"));
 const receipt = resp?.extensions?.["offer-receipt"]?.info?.receipt;
 console.log("\n=== receipt ===");
 console.log(JSON.stringify(receipt, null, 2));
-if (receipt?.payload?.txHash) {
-  console.log("\ntxHash:", receipt.payload.txHash);
-  console.log("basescan: https://basescan.org/tx/" + receipt.payload.txHash);
-}   
+ // The settlement hash lives at the top level of PAYMENT-RESPONSE, not inside
+// the signed receipt (whose schema marks `transaction` as optional).
+const txHash = resp?.transaction || resp?.transactionHash;
+if (txHash) {
+  console.log("\ntransaction:", txHash);
+  console.log("basescan: https://basescan.org/tx/" + txHash);
+  console.log("payer:     ", resp.payer);
+  console.log("network:   ", resp.network);
+}
+
+//console.log("full PAYMENT-RESPONSE:", JSON.stringify(resp, null, 2));
