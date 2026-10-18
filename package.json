@@ -27,6 +27,7 @@
     "dotenv": "^17.4.2",
     "ethers": "^6.17.0",
     "express": "^5.2.1",
+    "serve-favicon": "^2.5.1",
     "viem": "^2.56.0"
   },
   "devDependencies": {

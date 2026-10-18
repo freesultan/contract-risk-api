@@ -1,5 +1,7 @@
 import "dotenv/config";
 import express from "express";
+import favicon from "serve-favicon";
+import path from "path";
 import { fetchOnChainData, DEFAULT_RPC_URLS } from "./chain.js";
 import { analyzeBytecode } from "./heuristics.js";
 import { logUsage } from "./logger.js";
@@ -17,6 +19,11 @@ import { summarize } from "./categorize.js";
 import { TRACKED_CHANNELS } from "./channels.js";
 
 const app = express();
+
+// Serve favicon first, so it doesn't get caught by other middleware
+app.use(favicon(path.join(process.cwd(), "favicon.ico")));
+
+
 // Vercel terminates TLS upstream and forwards over plain HTTP with
 // X-Forwarded-Proto: https — without trusting that header, req.protocol
 // (used to build the /.well-known/x402, /llms.txt and /openapi.json resource

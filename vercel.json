@@ -1,12 +1,8 @@
 {
-  "redirects": [{ "source": "/", "destination": "/app", "permanent": false }],
+  "redirects": [
+    { "source": "/", "destination": "/app", "permanent": false }
+  ],
   "rewrites": [
-    {
-      "source": "/favicon.ico",
-      "destination": "/api/index.js"
-    },
-    { "source": "/", "destination": "/api" },
     { "source": "/(.*)", "destination": "/api" }
-    
   ]
 }
