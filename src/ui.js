@@ -1,17 +1,24 @@
-// Browser UI for /scan. Served as a single self-contained page so it works on
-// Vercel's serverless runtime without a bundler or a static-asset step (files
-// read from disk at request time aren't reliably included in the function
-// bundle; a JS module always is).
+// Browser UI for the three paid routes: /v1/scan, /v1/full-check, /v1/alert-check.
+// Served as a single self-contained page so it works on Vercel's serverless
+// runtime without a bundler or a static-asset step.
 //
-// The page implements the x402 "exact" EVM scheme by hand against an injected
-// wallet — no SDK, since the client SDKs assume a bundler. The payload shape
-// below was validated against the facilitator's /verify endpoint (which checks
-// the signature without settling) before this page was written.
+// Implements the x402 "exact" EVM scheme by hand against an injected wallet —
+// no SDK, since the client SDKs assume a bundler. The payload shape was
+// validated against the facilitator's /verify endpoint before this page was
+// written.
 //
 // The page's own script uses string concatenation rather than template
 // literals, so nothing inside it collides with this module's interpolation.
 
-import { getScanTerms, ENABLED, CANONICAL_SCAN_PATH } from "./payment.js";
+import {
+  getScanTerms,
+  getAlertTerms,
+  getFullCheckTerms,
+  ENABLED,
+  CANONICAL_SCAN_PATH,
+  CANONICAL_ALERT_PATH,
+  CANONICAL_FULLCHECK_PATH,
+} from "./payment.js";
 import { RISK_THRESHOLDS, PROXY_WEIGHT } from "./heuristics.js";
 import { FLAGGED_SELECTORS } from "./selectors.js";
 
@@ -34,22 +41,43 @@ function buildScoringRows() {
 
 const MAX_SCORE = PROXY_WEIGHT + FLAGGED_SELECTORS.reduce((n, f) => n + f.weight, 0);
 
-// Pays the canonical path by default, so UI traffic also accrues settlements
-// against the URL whose catalog row carries the full metadata.
-export function buildUiHtml(scanPath = CANONICAL_SCAN_PATH) {
-  const terms = getScanTerms();
+export function buildUiHtml() {
+  const scan = getScanTerms();
+  const alert = getAlertTerms();
+  const full = getFullCheckTerms();
+
   const config = {
-    scanPath,
     enabled: ENABLED,
-    price: terms.price,
-    network: terms.network,
-    payTo: terms.payTo,
-    serviceName: terms.serviceName,
-    description: terms.description,
-    // The published schema's example is USDC, but USDC scores 0 with no flags,
-    // which makes the UI look broken on first load. Prefill a Base contract
-    // that actually trips the proxy heuristic so the first scan shows real
-    // output. (USDbC, verified: isProxy true, medium risk.)
+    serviceName: scan.serviceName,
+    description: scan.description,
+    // Per-mode configuration. `path` is the x402 endpoint, `price` is the
+    // amount the user will be charged, and `placeholder` guides the address
+    // input for that mode.
+    modes: {
+      scan: {
+        path: CANONICAL_SCAN_PATH,
+        price: scan.price,
+        label: "Risk score only",
+        placeholder: "0x...",
+        requiresAddress: true,
+      },
+      full: {
+        path: CANONICAL_FULLCHECK_PATH,
+        price: full.price,
+        label: "Combined check (risk + alerts)",
+        placeholder: "0x...",
+        requiresAddress: true,
+      },
+      alert: {
+        path: CANONICAL_ALERT_PATH,
+        price: alert.price,
+        label: "Alert-channel monitor only",
+        placeholder: "0x... or a ticker like USDC",
+        requiresAddress: false,
+      },
+    },
+    // Prefill a Base contract that actually trips the proxy heuristic so the
+    // first scan shows real output. (USDbC, verified: isProxy true, medium risk.)
     exampleAddress: "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
   };
 
@@ -58,7 +86,7 @@ export function buildUiHtml(scanPath = CANONICAL_SCAN_PATH) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${terms.serviceName}</title>
+<title>${scan.serviceName}</title>
 <style>
   :root {
     color-scheme: light dark;
@@ -149,18 +177,28 @@ export function buildUiHtml(scanPath = CANONICAL_SCAN_PATH) {
 </head>
 <body>
 <div class="wrap">
-  <h1>${terms.serviceName}</h1>
-  <p class="sub">${terms.description}</p>
+  <h1>${scan.serviceName}</h1>
+  <p class="sub">${scan.description}</p>
 
   <div class="card">
     <div class="row">
       <div style="flex:2">
-        <label for="addr">Contract address</label>
+        <label for="addr">Contract address or ticker</label>
         <input id="addr" spellcheck="false" autocomplete="off" placeholder="0x...">
       </div>
       <div>
         <label for="chain">Chain</label>
         <select id="chain"><option value="base">Base</option><option value="ethereum">Ethereum</option></select>
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <div>
+        <label for="mode">Scan type</label>
+        <select id="mode">
+          <option value="scan">Risk score only — ${scan.price}</option>
+          <option value="full">Combined check (risk + alerts) — ${full.price}</option>
+          <option value="alert">Alert-channel monitor only — ${alert.price}</option>
+        </select>
       </div>
     </div>
     <div class="actions">
@@ -235,10 +273,28 @@ export function buildUiHtml(scanPath = CANONICAL_SCAN_PATH) {
   var $ = function (id) { return document.getElementById(id); };
   var account = null;
 
+  function currentMode() {
+    return CFG.modes[$("mode").value];
+  }
+
+  // Update placeholder when the mode changes so the user knows whether a
+  // ticker is acceptable.
+  function syncPlaceholder() {
+    $("addr").placeholder = currentMode().placeholder;
+  }
+
   $("addr").value = CFG.exampleAddress;
-  $("terms").textContent = CFG.enabled
-    ? "Each scan costs " + CFG.price + " in USDC on Base (x402). Paid peer-to-peer to the developer \\u2014 no account, no signup."
-    : "Running in free/test mode \\u2014 no payment required.";
+  $("mode").addEventListener("change", syncPlaceholder);
+  syncPlaceholder();
+
+  function updateTerms() {
+    var m = currentMode();
+    $("terms").textContent = CFG.enabled
+      ? "Each scan costs " + m.price + " in USDC on Base (x402). Paid peer-to-peer to the developer \\u2014 no account, no signup."
+      : "Running in free/test mode \\u2014 no payment required.";
+  }
+  $("mode").addEventListener("change", updateTerms);
+  updateTerms();
 
   function status(msg, isErr) {
     var el = $("status");
@@ -355,10 +411,10 @@ export function buildUiHtml(scanPath = CANONICAL_SCAN_PATH) {
     return JSON.parse(new TextDecoder().decode(bytes));
   }
 
-  function post(body, paymentHeader) {
+  function post(path, body, paymentHeader) {
     var headers = { "Content-Type": "application/json" };
     if (paymentHeader) headers["PAYMENT-SIGNATURE"] = paymentHeader;
-    return fetch(CFG.scanPath, { method: "POST", headers: headers, body: JSON.stringify(body) });
+    return fetch(path, { method: "POST", headers: headers, body: JSON.stringify(body) });
   }
 
   // Values here are echoed back from the request, so never interpolate them
@@ -369,9 +425,8 @@ export function buildUiHtml(scanPath = CANONICAL_SCAN_PATH) {
     });
   }
 
-  function render(data, settlement) {
+  function renderRisk(data) {
     var lvl = String(data.riskLevel || "low").toLowerCase();
-    // Only these map to a CSS class; anything else (e.g. "unknown") gets none.
     var lvlClass = ["low", "medium", "high"].indexOf(lvl) >= 0 ? lvl : "";
     var html = '<span class="badge ' + lvlClass + '">' + esc(lvl) + " risk</span>";
     html += "<dl>";
@@ -384,8 +439,6 @@ export function buildUiHtml(scanPath = CANONICAL_SCAN_PATH) {
     if (data.flags && data.flags.length) {
       html += "<p style='margin:16px 0 0'><strong>Flags</strong></p><ul>";
       for (var i = 0; i < data.flags.length; i++) {
-        // Flags are {label, weight} objects, not strings — concatenating one
-        // straight into the markup renders "[object Object]".
         var f = data.flags[i];
         var isObj = f && typeof f === "object";
         var label = isObj ? f.label : f;
@@ -398,11 +451,51 @@ export function buildUiHtml(scanPath = CANONICAL_SCAN_PATH) {
     } else {
       html += "<p class='meta' style='margin-top:14px'>No privileged-function flags detected. This is a v0 heuristic, not a guarantee.</p>";
     }
+    return html;
+  }
+
+  function renderAlerts(data) {
+    var c = data.categories || {};
+    var html = "<dl>";
+    html += "<dt>Mentions (rolling window)</dt><dd>" + esc(data.alertMentions) + "</dd>";
+    html += "<dt>Security alerts</dt><dd>" + esc(c.securityAlert || 0) + "</dd>";
+    html += "<dt>Whale movements</dt><dd>" + esc(c.whaleMovement || 0) + "</dd>";
+    html += "<dt>Listing / news</dt><dd>" + esc(c.listing || 0) + "</dd>";
+    html += "<dt>Other</dt><dd>" + esc(c.other || 0) + "</dd>";
+    html += "<dt>Channels</dt><dd>" + esc((data.channels || []).join(", ") || "none") + "</dd>";
+    html += "<dt>Last checked</dt><dd>" + esc(data.lastCheckedAt || "—") + "</dd>";
+    html += "</dl>";
+    if (data.note) html += "<p class='meta'>" + esc(data.note) + "</p>";
+    if (data.samples && data.samples.length) {
+      html += "<p style='margin:16px 0 0'><strong>Samples</strong></p><ul>";
+      for (var i = 0; i < data.samples.length; i++) {
+        html += "<li><span class='meta'>[" + esc(data.samples[i].channel) + "]</span> " + esc(data.samples[i].text) + "</li>";
+      }
+      html += "</ul>";
+    }
+    return html;
+  }
+
+  function render(data, settlement) {
+    var mode = $("mode").value;
+    var html = "";
+
+    if (mode === "scan") {
+      html = renderRisk(data);
+    } else if (mode === "alert") {
+      html = renderAlerts(data);
+    } else {
+      // full-check: risk + alerts in one response
+      html = "<h3>Risk</h3>" + renderRisk(data.risk || {});
+      html += "<h3 style='margin-top:22px'>Alerts</h3>" + renderAlerts(data.alerts || {});
+    }
+
     if (settlement && settlement.transaction) {
-      html += "<p class='meta' style='margin-top:16px'>Paid " + esc(CFG.price) +
+      html += "<p class='meta' style='margin-top:16px'>Paid " + esc(currentMode().price) +
         " \\u2014 <a href='https://basescan.org/tx/" + encodeURIComponent(settlement.transaction) +
         "' target='_blank' rel='noopener'>view transaction</a></p>";
     }
+
     $("result").innerHTML = html;
     $("result").classList.remove("hidden");
   }
@@ -410,15 +503,23 @@ export function buildUiHtml(scanPath = CANONICAL_SCAN_PATH) {
   async function scan() {
     var address = $("addr").value.trim();
     var chain = $("chain").value;
+    var mode = currentMode();
+
     $("result").classList.add("hidden");
-    if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+
+    if (mode.requiresAddress && !/^0x[0-9a-fA-F]{40}$/.test(address)) {
       status("Enter a valid 0x-prefixed contract address (40 hex characters).", true);
       return;
     }
+    if (!address) {
+      status("Enter an address or ticker.", true);
+      return;
+    }
+
     $("scan").disabled = true;
     try {
-      status("Requesting scan\\u2026");
-      var res = await post({ address: address, chain: chain });
+      status("Requesting " + $("mode").value + "\\u2026");
+      var res = await post(mode.path, { address: address, chain: chain });
 
       if (res.status === 200) { render(await res.json()); status(""); return; }
 
@@ -436,7 +537,7 @@ export function buildUiHtml(scanPath = CANONICAL_SCAN_PATH) {
       var payload = await signPayment(required);
 
       status("Submitting payment\\u2026");
-      var paid = await post({ address: address, chain: chain }, b64encode(payload));
+      var paid = await post(mode.path, { address: address, chain: chain }, b64encode(payload));
 
       if (paid.status === 200) {
         var settlement = null;
@@ -447,18 +548,15 @@ export function buildUiHtml(scanPath = CANONICAL_SCAN_PATH) {
         return;
       }
 
-      // A second 402 means the facilitator refused to settle; the reason is in
-      // the header, not the body.
       var reason = "";
       var again = paid.headers.get("payment-required");
       if (again) { try { reason = b64decode(again).error || ""; } catch (e) {} }
       if (reason === "invalid_exact_evm_insufficient_balance") {
-        status("Payment declined: that wallet needs at least " + CFG.price + " of USDC on Base.", true);
+        status("Payment declined: that wallet needs at least " + mode.price + " of USDC on Base.", true);
       } else {
         status("Payment did not settle" + (reason ? " (" + reason + ")" : "") + ".", true);
       }
     } catch (e) {
-      // 4001 = user rejected the signature request.
       if (e && e.code === 4001) status("Signature rejected \\u2014 nothing was charged.");
       else status(e && e.message ? e.message : String(e), true);
     } finally {

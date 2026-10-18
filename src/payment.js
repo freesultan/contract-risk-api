@@ -68,7 +68,7 @@ const SCAN_INPUT_SCHEMA = {
 const SCAN_EXAMPLE_INPUT = { address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", chain: "base" };
 const SCAN_EXAMPLE_OUTPUT = { ...SCAN_EXAMPLE_INPUT, riskLevel: "low", riskScore: 0 };
 const SCAN_SERVICE_NAME = "Contract Risk API";
-const SCAN_TAGS = ["security", "risk-analysis", "smart-contracts", "evm", "base", "ethereum", "defi", "trading"];
+const SCAN_TAGS = ["security", "risk-analysis", "smart-contracts", "evm", "defi"];
 
 // ---- Alert-channel monitor ----
 const ALERT_DESCRIPTION =
@@ -93,8 +93,7 @@ const ALERT_EXAMPLE_OUTPUT = {
 };
 const ALERT_SERVICE_NAME = "Alert-Channel Monitor";
 const ALERT_TAGS = [
-  "security", "risk-analysis", "smart-contracts", "evm", "base", "ethereum",
-  "defi", "trading", "telegram", "alerts", "sentiment", "social",
+  "security", "risk-analysis", "smart-contracts", "defi","telegram"
 ];
 
 // ---- Full check (both) ----
@@ -120,9 +119,7 @@ const FULLCHECK_EXAMPLE_OUTPUT = {
 };
 const FULLCHECK_SERVICE_NAME = "Contract Pre-Trade Check";
 const FULLCHECK_TAGS = [
-  "security", "risk-analysis", "smart-contracts", "evm", "base", "ethereum",
-  "defi", "trading", "telegram", "alerts", "sentiment", "social",
-  "pre-trade", "agent-safety",
+  "security", "risk-analysis", "smart-contracts","pre-trade", "agent-safety"
 ];
 
 // ---------------------------------------------------------------------------
