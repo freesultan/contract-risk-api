@@ -21,6 +21,9 @@ import {
 } from "./payment.js";
 import { RISK_THRESHOLDS, PROXY_WEIGHT } from "./heuristics.js";
 import { FLAGGED_SELECTORS } from "./selectors.js";
+import { TRACKED_CHANNELS } from "./channels.js";
+
+const TRACKED_CHANNEL_COUNT = TRACKED_CHANNELS.length;
 
 // Scoring reference rendered on the page, built from the scorer's own constants
 // so the explanation can never drift from the behaviour.
@@ -211,8 +214,10 @@ export function buildUiHtml() {
 
   <div id="result" class="card hidden"></div>
 
-  <details class="card">
-    <summary><strong>How the score works</strong></summary>
+     <details class="card">
+    <summary><strong>How each mode works</strong></summary>
+
+    <h3>Risk score (<code>scan</code> and <code>full</code> modes)</h3>
 
     <p>Every scan reads the contract's live bytecode and the EIP-1967 proxy
     storage slot, then adds a weight for each risk signal it finds. The total
@@ -234,7 +239,7 @@ export function buildUiHtml() {
     pausable and mintable by design &mdash; the score tells you how much power
     the owner holds, so you can decide whether you trust whoever holds it.</p>
 
-    <h3>What each signal adds</h3>
+    <h3>What each risk signal adds</h3>
     <table class="scoring">
       <thead><tr><th>Signal</th><th>Weight</th></tr></thead>
       <tbody>
@@ -248,8 +253,44 @@ export function buildUiHtml() {
     under-report on heavily optimised or obfuscated contracts, and proxy
     detection currently only reads the EIP-1967 slot &mdash; contracts using
     older proxy layouts (USDC among them) are reported as
-    <code>isProxy: false</code>. Treat this as one signal among several, not a
-    verdict.</p>
+    <code>isProxy: false</code>.</p>
+
+    <h3>Alert-channel monitoring (<code>alert</code> and <code>full</code> modes)</h3>
+
+    <p>Scrapes the public preview of ${TRACKED_CHANNEL_COUNT} crypto Telegram
+    channels &mdash; security-alert feeds, whale trackers, and ecosystem news
+    &mdash; and counts how many times the queried address or ticker appears in
+    each. Results are categorized by keyword:</p>
+
+    <table class="scoring">
+      <thead><tr><th>Category</th><th>What it flags</th></tr></thead>
+      <tbody>
+        <tr><td><code>securityAlert</code></td><td>hack, exploit, rug, drain, vulnerable, attack, phish, compromised, stolen, malicious, blacklist, frozen</td></tr>
+        <tr><td><code>whaleMovement</code></td><td>minted, burned, transferred, whale, moved, deposit, withdraw</td></tr>
+        <tr><td><code>listing</code></td><td>listed, listing, launch, upgrade, integration, partnership</td></tr>
+        <tr><td><code>other</code></td><td>Mentions that matched none of the above</td></tr>
+      </tbody>
+    </table>
+
+    <p><strong>Read <code>alertMentions</code> as a live snapshot, not a
+    historical record.</strong> It counts appearances in the current rolling
+    window &mdash; the last 30 messages of each channel, cached for 5 minutes
+    (15 for low-volume security feeds). <code>securityAlert: 0</code> means
+    <em>no security-channel mentions in this window</em>, <strong>not</strong>
+    &ldquo;never flagged.&rdquo; A contract exploited yesterday, before the
+    window rolled, will show zero. Absence of alerts is not a safety
+    guarantee. <code>lastCheckedAt</code> reports the scan timestamp so a
+    caller can reason about freshness.</p>
+
+    <h3>Combined check (<code>full</code> mode)</h3>
+
+    <p>Returns both signals in one response, running the bytecode fetch and
+    the channel scrape in parallel &mdash; so latency is the slower of the two,
+    not the sum. It is also cheaper than calling <code>scan</code> and
+    <code>alert</code> separately. The two signals are worth more together
+    than either alone: a contract with powerful owner functions that is
+    <em>also</em> being flagged in a security channel is a different situation
+    from either signal on its own.</p>
 
     <h3>Response fields</h3>
     <dl class="fields">
@@ -258,8 +299,13 @@ export function buildUiHtml() {
       <dt><code>isContract</code></dt><dd>Whether the address has bytecode. False means a wallet or an undeployed address.</dd>
       <dt><code>isProxy</code></dt><dd>Whether the EIP-1967 implementation slot is set, meaning an admin can swap the contract's logic.</dd>
       <dt><code>flags</code></dt><dd>Each signal found, as a human-readable <code>label</code> and its <code>weight</code>.</dd>
+      <dt><code>alertMentions</code></dt><dd>Total mentions in the rolling window across all tracked channels.</dd>
+      <dt><code>categories</code></dt><dd>Counts split by securityAlert / whaleMovement / listing / other.</dd>
+      <dt><code>channels</code></dt><dd>Which tracked channels contained a mention.</dd>
+      <dt><code>samples</code></dt><dd>Up to 5 matching messages, truncated to 200 characters.</dd>
+      <dt><code>lastCheckedAt</code></dt><dd>Timestamp of the scrape, for freshness reasoning.</dd>
+      <dt><code>note</code></dt><dd>Present when there is no data, or when a category is empty &mdash; explains what that absence does and does not mean.</dd>
       <dt><code>address</code>, <code>chain</code></dt><dd>Echoed back so a stored result is self-describing.</dd>
-      <dt><code>note</code></dt><dd>Only present when there is no code to analyse.</dd>
     </dl>
   </details>
 
