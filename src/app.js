@@ -10,7 +10,7 @@ import {
   ALERT_PATHS,
   FULLCHECK_PATHS,
 } from "./payment.js";
-import { buildX402Manifest, buildLlmsTxt } from "./discovery.js";
+import { buildX402Manifest, buildLlmsTxt, buildOpenApiSpec } from "./discovery.js";
 import { buildUiHtml } from "./ui.js";
 import { searchChannels } from "./telegram.js";
 import { summarize } from "./categorize.js";
@@ -19,8 +19,9 @@ import { TRACKED_CHANNELS } from "./channels.js";
 const app = express();
 // Vercel terminates TLS upstream and forwards over plain HTTP with
 // X-Forwarded-Proto: https — without trusting that header, req.protocol
-// (used to build the /.well-known/x402 and /llms.txt resource URLs) reports
-// "http", handing agents a URL that isn't actually the site's real address.
+// (used to build the /.well-known/x402, /llms.txt and /openapi.json resource
+// URLs) reports "http", handing agents a URL that isn't actually the site's
+// real address.
 app.set("trust proxy", true);
 app.use(express.json());
 
@@ -47,7 +48,7 @@ const { enabled: paymentEnabled, middleware: paymentMiddleware } = await buildPa
 app.use(paymentMiddleware);
 
 // Browser UI, so a human can pay for and read a scan without any tooling;
-// agents keep using the JSON route directly.
+// agents keep using the JSON routes directly.
 // An unhandled throw here becomes an opaque Vercel FUNCTION_INVOCATION_FAILED
 // with no message and no stack, so catch and report instead.
 function serveUi(req, res) {
@@ -83,6 +84,15 @@ app.get("/.well-known/x402", (req, res) => {
 app.get("/llms.txt", (req, res) => {
   const baseUrl = `${req.protocol}://${req.get("host")}`;
   res.type("text/plain").send(buildLlmsTxt(baseUrl));
+});
+
+// Canonical OpenAPI 3.1 spec for x402scan registration and any crawler that
+// discovers services via /openapi.json. Only paid /v1/* routes appear in it —
+// free routes are excluded because x402scan rejects specs that advertise
+// non-paid paths.
+app.get("/openapi.json", (req, res) => {
+  const baseUrl = `${req.protocol}://${req.get("host")}`;
+  res.json(buildOpenApiSpec(baseUrl));
 });
 
 // ---------------------------------------------------------------------------

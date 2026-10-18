@@ -1,0 +1,252 @@
+{
+    "openapi": "3.1.0",
+    "info": {
+      "title": "Contract Risk API",
+      "version": "1.0.0",
+      "description": "Pre-trade safety checks for smart contracts and tokens. All paid routes use the x402 'exact' scheme settling in USDC on Base (eip155:8453). Every 402 carries a signed offer and every 200 a signed receipt (EIP-712) — see /.well-known/x402 -> signing."
+    },
+    "servers": [
+      { "url": "https://smartcontractrisk.0xhodhod.xyz" }
+    ],
+    "paths": {
+      "/v1/scan": {
+        "post": {
+          "operationId": "scanContract",
+          "summary": "On-chain contract risk score",
+          "description": "On-chain contract risk score: detects upgradeable proxies and privileged functions from live bytecode. Use before trading/interacting with an unfamiliar contract.",
+          "tags": [
+            "security",
+            "risk-analysis",
+            "smart-contracts",
+            "evm",
+            "base",
+            "ethereum",
+            "defi",
+            "trading"
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "address": {
+                      "type": "string",
+                      "description": "0x-prefixed EVM contract address to scan"
+                    },
+                    "chain": {
+                      "type": "string",
+                      "enum": ["base", "ethereum"],
+                      "description": "Chain to query (default: base)"
+                    }
+                  },
+                  "required": ["address"]
+                }
+              }
+            }
+          },
+          "x-payment-info": {
+            "price": {
+              "fixed": {
+                "mode": "fixed",
+                "currency": "USD",
+                "amount": "0.02"
+              }
+            },
+            "protocols": [{ "x402": {} }]
+          },
+          "responses": {
+            "200": {
+              "description": "Successful response",
+              "content": {
+                "application/json": {
+                  "schema": { "type": "object" },
+                  "example": {
+                    "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+                    "chain": "base",
+                    "riskLevel": "low",
+                    "riskScore": 0
+                  }
+                }
+              }
+            },
+            "400": { "description": "Bad Request — invalid or missing address" },
+            "402": { "description": "Payment Required" }
+          }
+        }
+      },
+      "/v1/alert-check": {
+        "post": {
+          "operationId": "checkAlerts",
+          "summary": "Telegram alert-channel monitoring",
+          "description": "Telegram alert-channel monitoring for a contract address or ticker: returns mention volume across tracked crypto channels, categorized into security alerts, whale movements, and listing/news. Use alongside an on-chain risk scan — a contract with a high risk score that is also being flagged by a security channel is a materially different signal.",
+          "tags": [
+            "security",
+            "risk-analysis",
+            "smart-contracts",
+            "evm",
+            "base",
+            "ethereum",
+            "defi",
+            "trading",
+            "telegram",
+            "alerts",
+            "sentiment",
+            "social"
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "address": {
+                      "type": "string",
+                      "description": "Contract address or search term (e.g. a ticker like USDC)"
+                    },
+                    "chain": {
+                      "type": "string",
+                      "enum": ["base", "ethereum"],
+                      "description": "Chain hint (default: base)"
+                    }
+                  },
+                  "required": ["address"]
+                }
+              }
+            }
+          },
+          "x-payment-info": {
+            "price": {
+              "fixed": {
+                "mode": "fixed",
+                "currency": "USD",
+                "amount": "0.03"
+              }
+            },
+            "protocols": [{ "x402": {} }]
+          },
+          "responses": {
+            "200": {
+              "description": "Successful response",
+              "content": {
+                "application/json": {
+                  "schema": { "type": "object" },
+                  "example": {
+                    "query": "USDC",
+                    "chain": "base",
+                    "alertMentions": 14,
+                    "categories": {
+                      "securityAlert": 0,
+                      "whaleMovement": 14,
+                      "listing": 0,
+                      "other": 0
+                    },
+                    "channels": ["whale_alert", "whale_alert_io"],
+                    "lastCheckedAt": "2026-10-14T12:19:44.073Z"
+                  }
+                }
+              }
+            },
+            "400": { "description": "Bad Request — invalid or missing address" },
+            "402": { "description": "Payment Required" }
+          }
+        }
+      },
+      "/v1/full-check": {
+        "post": {
+          "operationId": "fullCheck",
+          "summary": "Combined pre-trade check (risk + alerts)",
+          "description": "Combined pre-trade safety check: on-chain risk score (proxy + privileged-function detection from live bytecode) plus Telegram alert-channel monitoring, in one call. Cheaper than calling /v1/scan and /v1/alert-check separately ($0.04 vs $0.05), and the two signals are worth more together — a contract with privileged functions that is also being flagged in a security channel is a different situation than either signal alone.",
+          "tags": [
+            "security",
+            "risk-analysis",
+            "smart-contracts",
+            "evm",
+            "base",
+            "ethereum",
+            "defi",
+            "trading",
+            "telegram",
+            "alerts",
+            "sentiment",
+            "social",
+            "pre-trade",
+            "agent-safety"
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "address": {
+                      "type": "string",
+                      "description": "0x-prefixed EVM contract address to scan"
+                    },
+                    "chain": {
+                      "type": "string",
+                      "enum": ["base", "ethereum"],
+                      "description": "Chain to query (default: base)"
+                    }
+                  },
+                  "required": ["address"]
+                }
+              }
+            }
+          },
+          "x-payment-info": {
+            "price": {
+              "fixed": {
+                "mode": "fixed",
+                "currency": "USD",
+                "amount": "0.04"
+              }
+            },
+            "protocols": [{ "x402": {} }]
+          },
+          "responses": {
+            "200": {
+              "description": "Successful response",
+              "content": {
+                "application/json": {
+                  "schema": { "type": "object" },
+                  "example": {
+                    "address": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+                    "chain": "base",
+                    "risk": {
+                      "isContract": true,
+                      "isProxy": true,
+                      "flags": [
+                        {
+                          "label": "upgradeable proxy (EIP-1967) — logic can be swapped by admin",
+                          "weight": 10
+                        }
+                      ],
+                      "riskScore": 10,
+                      "riskLevel": "medium"
+                    },
+                    "alerts": {
+                      "alertMentions": 0,
+                      "categories": {
+                        "securityAlert": 0,
+                        "whaleMovement": 0,
+                        "listing": 0,
+                        "other": 0
+                      },
+                      "channels": [],
+                      "note": "No mentions in the current rolling window (last 30 messages per tracked channel). Absence of alerts is not a safety guarantee."
+                    }
+                  }
+                }
+              }
+            },
+            "400": { "description": "Bad Request — invalid or missing address" },
+            "402": { "description": "Payment Required" }
+          }
+        }
+      }
+    }
+  }

@@ -28,13 +28,20 @@ const NETWORK = process.env.X402_NETWORK || "eip155:8453"; // Base mainnet
 
 // ---------------------------------------------------------------------------
 // Paths — the single source of truth, shared by app.js (route registration),
-// discovery.js (manifest + llms.txt) and the middleware below.
+// discovery.js (manifest + llms.txt + openapi.json) and the middleware below.
 // ---------------------------------------------------------------------------
 
-// SCAN_PATHS: /scan is the original route; /v1/scan is the versioned alias.
-// Both are listed because catalog rows are keyed by URL and never re-read
-// metadata, so a fresh URL is how updated serviceName/tags land.
-export const SCAN_PATHS = ["/scan", "/v1/scan"];
+// Only /v1/scan is registered. The original unversioned /scan was a legacy
+// alias added because PayAI's catalog keys rows by URL and never re-reads
+// metadata for an existing row — so /v1/scan earned a fresh row carrying
+// serviceName/tags. That purpose is served; /scan was removed to reduce the
+// x402scan probe surface (it rejects registrations advertising unnecessary
+// routes) and the drift risk of two paths that must stay in sync.
+//
+// If a real client is later found still calling /scan, add a 410 Gone handler
+// in app.js rather than a redirect: a 301/302 on a POST with a body and
+// PAYMENT-SIGNATURE header is unreliable across HTTP clients.
+export const SCAN_PATHS = ["/v1/scan"];
 export const ALERT_PATHS = ["/v1/alert-check"];
 export const FULLCHECK_PATHS = ["/v1/full-check"];
 
@@ -108,8 +115,6 @@ const FULLCHECK_EXAMPLE_OUTPUT = {
     alertMentions: 0,
     categories: { securityAlert: 0, whaleMovement: 0, listing: 0, other: 0 },
     channels: [],
-    // Kept in sync with categorize.js's two-branch note so the published
-    // example matches what production actually returns.
     note: "No mentions in the current rolling window (last 30 messages per tracked channel). Absence of alerts is not a safety guarantee.",
   },
 };
@@ -305,10 +310,13 @@ export async function buildPaymentMiddleware() {
         output: { example: terms.exampleOutput },
       }),
       // Signed offer (on 402) + signed receipt (on 200).
-      //
-      
+      // `includeTxHash` is NOT passed: the receipt schema marks `transaction`
+      // as optional, and this extension leaves it empty — the settlement hash
+      // lives at the TOP LEVEL of PAYMENT-RESPONSE (standard x402 envelope),
+      // not inside the signed receipt. That separation is deliberate and
+      // stronger: the receipt attests to who said this / for whom / when, and
+      // the chain attests to settlement.
       ...declareOfferReceiptExtension({
-        
         offerValiditySeconds: 300,
       }),
     },

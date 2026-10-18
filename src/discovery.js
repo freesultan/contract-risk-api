@@ -1,8 +1,10 @@
 // Static discovery surfaces for LLM/agent crawlers that don't talk to a
-// facilitator's Bazaar API directly: a machine-readable manifest at the
-// conventional .well-known/x402 path, and a plain-text summary at llms.txt
-// (the format popular x402 catalogs like x402.openwebninja.com use). Both
-// are generated from the same terms as the live payment routes
+// facilitator's Bazaar API directly:
+//   - .well-known/x402   : machine-readable x402 manifest
+//   - llms.txt           : plain-text summary in the format x402 catalogs use
+//   - openapi.json       : canonical OpenAPI 3.1 spec, required by x402scan
+//
+// All three are generated from the same terms as the live payment routes
 // (payment.js's get*Terms()), so they can't drift out of sync.
 
 import {
@@ -15,12 +17,15 @@ import {
   ALERT_PATHS,
   FULLCHECK_PATHS,
   CANONICAL_SCAN_PATH,
+  CANONICAL_ALERT_PATH,
+  CANONICAL_FULLCHECK_PATH,
 } from "./payment.js";
 import { RISK_THRESHOLDS, PROXY_WEIGHT } from "./heuristics.js";
 import { FLAGGED_SELECTORS } from "./selectors.js";
 
 // All paid routes, in the order they should appear in listings. Grouped so
-// both discovery surfaces (manifest + llms.txt) iterate the same shape.
+// every discovery surface (manifest, llms.txt, openapi.json) iterates the same
+// shape and can't advertise a route the middleware doesn't gate.
 function allRoutes() {
   return [
     { paths: SCAN_PATHS, terms: getScanTerms() },
@@ -69,7 +74,10 @@ export function buildX402Manifest(baseUrl) {
     x402Version: 2,
     resources,
     canonical: `${baseUrl}${CANONICAL_SCAN_PATH}`,
-    discovery: { llmsTxt: `${baseUrl}/llms.txt` },
+    discovery: {
+      llmsTxt: `${baseUrl}/llms.txt`,
+      openapi: `${baseUrl}/openapi.json`,
+    },
     x402: {
       enabled: ENABLED,
       mode: ENABLED ? "paid" : "free-test",
@@ -103,7 +111,7 @@ export function buildLlmsTxt(baseUrl) {
   const payToLine = payTo ? `, payTo ${payTo}` : " (payTo not yet configured)";
 
   const signingSection = signing
-  ? `## Verifying a paid response
+    ? `## Verifying a paid response
 
 Every 402 response carries a signed **offer** in
 extensions["offer-receipt"].info.offers — one per accepted payment option,
@@ -137,7 +145,7 @@ and when" — not "is it true". Treat it as a resolvable audit trail, not a
 safety score.
 
 `
-  : `## Signed offers & receipts
+    : `## Signed offers & receipts
 Not active in free-test mode. Once ENABLE_PAYMENTS=true, every 402 carries a
 signed offer and every 200 a signed receipt (EIP-712), plus the settlement
 transaction hash in the same PAYMENT-RESPONSE envelope. Verify the signer
@@ -158,7 +166,6 @@ ${scan.description}
 Request body (application/json): { "address": "0x...", "chain": "base" | "ethereum" }
 Example request: ${JSON.stringify(scan.exampleInput)}
 Example response: ${JSON.stringify(scan.exampleOutput)}
-Also served at: ${SCAN_PATHS.filter((p) => p !== CANONICAL_SCAN_PATH).map((p) => baseUrl + p).join(", ") || "(none)"}
 
 How to read riskScore: the sum of the weights of every risk signal found in
 the contract's live bytecode and its EIP-1967 proxy slot. riskLevel bands it:
@@ -172,7 +179,7 @@ measures how much power the owner holds, not their intent. Detection is a
 bytecode heuristic and only reads the EIP-1967 proxy slot, so it can
 under-report on optimised bytecode and on older proxy layouts.
 
-## POST ${baseUrl}${ALERT_PATHS[0]} — Telegram alert-channel monitor — ${alert.price}
+## POST ${baseUrl}${CANONICAL_ALERT_PATH} — Telegram alert-channel monitor — ${alert.price}
 ${alert.description}
 
 Request body (application/json): { "address": "0x... or a ticker like USDC", "chain": "base" | "ethereum" }
@@ -186,7 +193,7 @@ window", NOT "never flagged." Absence of alerts is not a safety guarantee.
 Categories: securityAlert, whaleMovement, listing, other. lastCheckedAt
 reports the scan timestamp, so a caller can reason about freshness.
 
-## POST ${baseUrl}${FULLCHECK_PATHS[0]} — combined pre-trade check — ${full.price}
+## POST ${baseUrl}${CANONICAL_FULLCHECK_PATH} — combined pre-trade check — ${full.price}
 ${full.description}
 
 Request body (application/json): { "address": "0x...", "chain": "base" | "ethereum" }
@@ -203,7 +210,106 @@ ${baseUrl}/ redirects here.
 ## GET ${baseUrl}/health
 Free liveness check, no payment required.
 
-## Machine-readable manifest
+## Machine-readable surfaces
 ${baseUrl}/.well-known/x402
+${baseUrl}/openapi.json
 `;
+}
+
+// ---------------------------------------------------------------------------
+// OpenAPI 3.1 — required for x402scan registration
+// ---------------------------------------------------------------------------
+
+// OpenAPI's x-payment-info.price.fixed.amount is decimal USD ("0.02"), NOT the
+// atomic USDC units ("20000") that appear in the live 402 challenge. Convert
+// here once so the two can't silently diverge.
+function usdAmount(priceStr) {
+  return String(priceStr).replace(/^\$/, "");
+}
+
+// payment.js keeps inputSchema as { properties, required } — flat, per the
+// shape the bazaar extension accepts. OpenAPI wants { type: "object", ... }.
+function requestBodySchema(termInputSchema) {
+  return {
+    type: "object",
+    properties: termInputSchema.properties,
+    required: termInputSchema.required,
+  };
+}
+
+// One operation per paid route. `x-payment-info` and the 402 response are the
+// two things x402scan requires — the description/summary are for humans reading
+// the generated docs.
+function paidOperation(terms, { operationId, summary }) {
+  return {
+    operationId,
+    summary,
+    description: terms.description,
+    tags: terms.tags,
+    requestBody: {
+      required: true,
+      content: {
+        "application/json": { schema: requestBodySchema(terms.inputSchema) },
+      },
+    },
+    "x-payment-info": {
+      price: {
+        fixed: {
+          mode: "fixed",
+          currency: "USD",
+          amount: usdAmount(terms.price),
+        },
+      },
+      protocols: [{ x402: {} }],
+    },
+    responses: {
+      "200": {
+        description: "Successful response",
+        content: {
+          "application/json": {
+            schema: { type: "object" },
+            example: terms.exampleOutput,
+          },
+        },
+      },
+      "400": { description: "Bad Request — invalid or missing address" },
+      "402": { description: "Payment Required" },
+    },
+  };
+}
+
+export function buildOpenApiSpec(baseUrl) {
+  return {
+    openapi: "3.1.0",
+    info: {
+      title: "Contract Risk API",
+      version: "1.0.0",
+      description:
+        "Pre-trade safety checks for smart contracts and tokens. All paid routes use the x402 'exact' scheme settling in USDC on Base (eip155:8453). Every 402 carries a signed offer and every 200 a signed receipt (EIP-712) — see /.well-known/x402 -> signing.",
+    },
+    servers: [{ url: baseUrl }],
+    // Only the three paid /v1/* routes appear here. Free routes (/health,
+    // /llms.txt, /.well-known/x402, /app) MUST NOT be listed — x402scan
+    // rejects registrations whose spec advertises non-paid paths.
+    paths: {
+      [CANONICAL_SCAN_PATH]: {
+        post: paidOperation(getScanTerms(), {
+          operationId: "scanContract",
+          summary: "On-chain contract risk score",
+        }),
+      },
+      [CANONICAL_ALERT_PATH]: {
+        post: paidOperation(getAlertTerms(), {
+          operationId: "checkAlerts",
+          summary: "Telegram alert-channel monitoring",
+        }),
+      },
+      [CANONICAL_FULLCHECK_PATH]: {
+        post: paidOperation(getFullCheckTerms(), {
+          operationId: "fullCheck",
+          summary: "Combined pre-trade check (risk + alerts)",
+        }),
+      },
+    },
+  };
 }
