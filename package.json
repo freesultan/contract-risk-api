@@ -26,10 +26,10 @@
     "@x402/extensions": "^2.23.0",
     "dotenv": "^17.4.2",
     "ethers": "^6.17.0",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "viem": "^2.56.0"
   },
   "devDependencies": {
-    "@x402/fetch": "^2.23.0",
-    "viem": "^2.56.0"
+    "@x402/fetch": "^2.23.0"
   }
 }

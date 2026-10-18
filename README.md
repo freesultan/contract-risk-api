@@ -13,7 +13,94 @@ only verifies signatures and broadcasts the transaction, it never
 custodies funds. Chosen after ruling out Coinbase's facilitator (per
 instruction) and Nevermined (forces a mandatory Stripe Connect payout,
 which wasn't usable — see git history for that abandoned integration).
+## Diagrams
+Module dependency graph
+```mermaid
+graph TD
+    subgraph Entry points
+        SRV["server.js<br/>(local: npm start)"]
+        VER["api/index.js<br/>(Vercel serverless)"]
+    end
 
+    subgraph Core app
+        APP["app.js<br/>Express routes + CORS"]
+    end
+
+    subgraph Payments & discovery
+        PAY["payment.js<br/>x402 gating, terms, signing"]
+        DISC["discovery.js<br/>x402 manifest, llms.txt"]
+        UI["ui.js<br/>browser UI"]
+    end
+
+    subgraph Scan pipeline
+        CHAIN["chain.js<br/>RPC fetch"]
+        SEL["selectors.js<br/>slot + selector constants"]
+        HEUR["heuristics.js<br/>analyzeBytecode (pure)"]
+    end
+
+    subgraph Alert pipeline
+        TG["telegram.js<br/>scrape t.me/s"]
+        CAT["categorize.js<br/>categorize/summarize"]
+        CHAN["channels.js<br/>TRACKED_CHANNELS"]
+    end
+
+    LOG["logger.js<br/>JSONL log"]
+
+    SRV --> APP
+    VER --> APP
+
+    APP --> PAY
+    APP --> DISC
+    APP --> UI
+    APP --> CHAIN
+    APP --> HEUR
+    APP --> TG
+    APP --> CAT
+    APP --> CHAN
+    APP --> LOG
+
+    CHAIN --> SEL
+    HEUR --> SEL
+    DISC --> PAY
+    DISC --> HEUR
+    DISC --> SEL
+    UI --> PAY
+    UI --> HEUR
+    UI --> SEL
+    PAY --> LOG
+
+```
+
+Request flow
+```mermaid
+flowchart TD
+    REQ([Client / agent / browser]) --> MW{CORS + payment<br/>middleware}
+    MW -->|unpaid paid route| P402["402 + signed offer<br/>(x402 exact)"]
+    MW -->|paid / free-test| ROUTE{route}
+
+    ROUTE -->|POST /scan /v1/scan| S1["chain.fetchOnChainData<br/>→ heuristics.analyzeBytecode"]
+    ROUTE -->|POST /v1/alert-check| A1["telegram.searchChannels<br/>→ categorize.summarize"]
+    ROUTE -->|POST /v1/full-check| F1["Promise.all(scan, alert)"]
+    ROUTE -->|GET /app, /| U1["ui.buildUiHtml"]
+    ROUTE -->|GET /.well-known/x402| D1["discovery.buildX402Manifest"]
+    ROUTE -->|GET /llms.txt| D2["discovery.buildLlmsTxt"]
+    ROUTE -->|GET /health| H1["ok + paymentEnabled + chains"]
+
+    S1 --> BLK["scan pipeline"]
+    A1 --> BLK2["alert pipeline"]
+    F1 --> BLK
+    F1 --> BLK2
+    BLK --> OUT([200 JSON + signed receipt])
+    BLK2 --> OUT
+    U1 --> OUT
+    D1 --> OUT
+    D2 --> OUT
+    H1 --> OUT
+
+    BLK -->|every request| LOG[("logger.logUsage<br/>usage.log.jsonl")]
+    BLK2 -.-> LOG
+
+```
 ## Browser UI
 
 **The UI lives at `/app`.** `GET /` returns Vercel's

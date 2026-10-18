@@ -10,6 +10,7 @@ import {
   getScanTerms,
   getAlertTerms,
   getFullCheckTerms,
+  getSigningInfo,
   SCAN_PATHS,
   ALERT_PATHS,
   FULLCHECK_PATHS,
@@ -26,6 +27,17 @@ function allRoutes() {
     { paths: ALERT_PATHS, terms: getAlertTerms() },
     { paths: FULLCHECK_PATHS, terms: getFullCheckTerms() },
   ];
+}
+
+// Signing identity is optional (absent in free-test mode), but a throw here
+// would take down the manifest for a malformed key — better to surface it as
+// "not configured" than to 500 the discovery surface agents depend on.
+function safeSigningInfo() {
+  try {
+    return getSigningInfo();
+  } catch {
+    return null;
+  }
 }
 
 export function buildX402Manifest(baseUrl) {
@@ -52,7 +64,8 @@ export function buildX402Manifest(baseUrl) {
     }
   }
 
-  return {
+  const signing = safeSigningInfo();
+  const manifest = {
     x402Version: 2,
     resources,
     canonical: `${baseUrl}${CANONICAL_SCAN_PATH}`,
@@ -60,17 +73,60 @@ export function buildX402Manifest(baseUrl) {
     x402: {
       enabled: ENABLED,
       mode: ENABLED ? "paid" : "free-test",
+      // Advertise the extension so a crawler knows to look for it before
+      // paying. Absent in free-test mode, where nothing is signed.
+      extensions: signing ? ["offer-receipt"] : [],
     },
   };
+
+  // Published signing identity. A client verifies a receipt by recovering the
+  // signer from its EIP-712 signature and comparing against this address —
+  // no shared secret, no document to fetch, nothing mutable in the trust path.
+  if (signing) {
+    manifest.signing = {
+      format: signing.format,
+      kid: signing.kid,
+      address: signing.address,
+    };
+  }
+
+  return manifest;
 }
 
 export function buildLlmsTxt(baseUrl) {
   const scan = getScanTerms();
   const alert = getAlertTerms();
   const full = getFullCheckTerms();
+  const signing = safeSigningInfo();
 
   const payTo = scan.payTo; // same wallet for all three
   const payToLine = payTo ? `, payTo ${payTo}` : " (payTo not yet configured)";
+
+  const signingSection = signing
+    ? `## Verifying a paid response
+
+Every 402 response carries signed offers in its extensions["offer-receipt"].info.offers
+array — one per accepted payment option, each committing to the scheme, network,
+amount and payTo for that option. Every 200 response carries a signed receipt in
+the PAYMENT-RESPONSE header's extensions["offer-receipt"].info.receipt, containing
+resourceUrl, payer, network, issuedAt, and the settlement txHash.
+
+Signatures are EIP-712. To verify a receipt: recover the signer address from the
+signature and typed data, then compare it to the address published at
+${baseUrl}/.well-known/x402 -> signing.address (currently ${signing.address}).
+
+What this proves: that this service, identified by ${signing.kid}, produced this
+response for this payer at this time. What it does NOT prove: that the underlying
+on-chain or Telegram data is correct. A signature answers "who said this, and
+when" — not "is it true". Treat it as a resolvable audit trail, not a safety score.
+
+`
+    : `## Signed offers & receipts
+Not active in free-test mode. Once ENABLE_PAYMENTS=true, every 402 carries a
+signed offer and every 200 a signed receipt (EIP-712), verifiable against the
+signing address published at ${baseUrl}/.well-known/x402.
+
+`;
 
   return `# ${scan.serviceName} (and companion routes)
 
@@ -121,9 +177,9 @@ Example request: ${JSON.stringify(full.exampleInput)}
 Example response: ${JSON.stringify(full.exampleOutput)}
 
 Returns { address, chain, risk: <scan response>, alerts: <alert-check response> }
-in one call. Cheaper than calling /v1/scan and /v1/alert-check separately.
+in one call. $0.04 vs $0.05 for the two routes separately.
 
-## GET ${baseUrl}/app
+${signingSection}## GET ${baseUrl}/app
 Browser UI: connect an EVM wallet, pay with USDC on Base, read the scan.
 ${baseUrl}/ redirects here.
 
