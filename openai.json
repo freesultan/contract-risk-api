@@ -3,7 +3,12 @@
     "info": {
       "title": "Contract Risk API",
       "version": "1.0.0",
-      "description": "Pre-trade safety checks for smart contracts and tokens. All paid routes use the x402 'exact' scheme settling in USDC on Base (eip155:8453). Every 402 carries a signed offer and every 200 a signed receipt (EIP-712) — see /.well-known/x402 -> signing."
+      "description": "Pre-trade safety checks for smart contracts and tokens. All paid routes use the x402 'exact' scheme settling in USDC on Base (eip155:8453). Every 402 carries a signed offer and every 200 a signed receipt (EIP-712) — see /.well-known/x402 -> signing.",
+      "contact": {
+        "name": "0xhodhod",
+        "email": "freetayyeb@proton.me"
+      },
+      "x-guidance": "Use /v1/full-check for pre-trade safety. It returns both a risk score and alert-channel activity in one call, and it is cheaper than calling /v1/scan and /v1/alert-check separately ($0.04 vs $0.05). A high risk score alone is not proof of malice; treat it as a prompt to look closer. securityAlert: 0 in the alerts block means 'no mentions in the current rolling window', not 'never flagged'."
     },
     "servers": [
       { "url": "https://smartcontractrisk.0xhodhod.xyz" }
@@ -14,16 +19,7 @@
           "operationId": "scanContract",
           "summary": "On-chain contract risk score",
           "description": "On-chain contract risk score: detects upgradeable proxies and privileged functions from live bytecode. Use before trading/interacting with an unfamiliar contract.",
-          "tags": [
-            "security",
-            "risk-analysis",
-            "smart-contracts",
-            "evm",
-            "base",
-            "ethereum",
-            "defi",
-            "trading"
-          ],
+          "tags": ["security", "risk-analysis", "smart-contracts", "evm", "base", "ethereum", "defi", "trading"],
           "requestBody": {
             "required": true,
             "content": {
@@ -31,15 +27,8 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "address": {
-                      "type": "string",
-                      "description": "0x-prefixed EVM contract address to scan"
-                    },
-                    "chain": {
-                      "type": "string",
-                      "enum": ["base", "ethereum"],
-                      "description": "Chain to query (default: base)"
-                    }
+                    "address": { "type": "string", "description": "0x-prefixed EVM contract address to scan" },
+                    "chain": { "type": "string", "enum": ["base", "ethereum"], "description": "Chain to query (default: base)" }
                   },
                   "required": ["address"]
                 }
@@ -47,13 +36,7 @@
             }
           },
           "x-payment-info": {
-            "price": {
-              "fixed": {
-                "mode": "fixed",
-                "currency": "USD",
-                "amount": "0.02"
-              }
-            },
+            "price": { "fixed": { "mode": "fixed", "currency": "USD", "amount": "0.02" } },
             "protocols": [{ "x402": {} }]
           },
           "responses": {
@@ -81,20 +64,7 @@
           "operationId": "checkAlerts",
           "summary": "Telegram alert-channel monitoring",
           "description": "Telegram alert-channel monitoring for a contract address or ticker: returns mention volume across tracked crypto channels, categorized into security alerts, whale movements, and listing/news. Use alongside an on-chain risk scan — a contract with a high risk score that is also being flagged by a security channel is a materially different signal.",
-          "tags": [
-            "security",
-            "risk-analysis",
-            "smart-contracts",
-            "evm",
-            "base",
-            "ethereum",
-            "defi",
-            "trading",
-            "telegram",
-            "alerts",
-            "sentiment",
-            "social"
-          ],
+          "tags": ["security", "risk-analysis", "smart-contracts", "evm", "base", "ethereum", "defi", "trading", "telegram", "alerts", "sentiment", "social"],
           "requestBody": {
             "required": true,
             "content": {
@@ -102,15 +72,8 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "address": {
-                      "type": "string",
-                      "description": "Contract address or search term (e.g. a ticker like USDC)"
-                    },
-                    "chain": {
-                      "type": "string",
-                      "enum": ["base", "ethereum"],
-                      "description": "Chain hint (default: base)"
-                    }
+                    "address": { "type": "string", "description": "Contract address or search term (e.g. a ticker like USDC)" },
+                    "chain": { "type": "string", "enum": ["base", "ethereum"], "description": "Chain hint (default: base)" }
                   },
                   "required": ["address"]
                 }
@@ -118,13 +81,7 @@
             }
           },
           "x-payment-info": {
-            "price": {
-              "fixed": {
-                "mode": "fixed",
-                "currency": "USD",
-                "amount": "0.03"
-              }
-            },
+            "price": { "fixed": { "mode": "fixed", "currency": "USD", "amount": "0.03" } },
             "protocols": [{ "x402": {} }]
           },
           "responses": {
@@ -137,12 +94,7 @@
                     "query": "USDC",
                     "chain": "base",
                     "alertMentions": 14,
-                    "categories": {
-                      "securityAlert": 0,
-                      "whaleMovement": 14,
-                      "listing": 0,
-                      "other": 0
-                    },
+                    "categories": { "securityAlert": 0, "whaleMovement": 14, "listing": 0, "other": 0 },
                     "channels": ["whale_alert", "whale_alert_io"],
                     "lastCheckedAt": "2026-10-14T12:19:44.073Z"
                   }
@@ -159,22 +111,7 @@
           "operationId": "fullCheck",
           "summary": "Combined pre-trade check (risk + alerts)",
           "description": "Combined pre-trade safety check: on-chain risk score (proxy + privileged-function detection from live bytecode) plus Telegram alert-channel monitoring, in one call. Cheaper than calling /v1/scan and /v1/alert-check separately ($0.04 vs $0.05), and the two signals are worth more together — a contract with privileged functions that is also being flagged in a security channel is a different situation than either signal alone.",
-          "tags": [
-            "security",
-            "risk-analysis",
-            "smart-contracts",
-            "evm",
-            "base",
-            "ethereum",
-            "defi",
-            "trading",
-            "telegram",
-            "alerts",
-            "sentiment",
-            "social",
-            "pre-trade",
-            "agent-safety"
-          ],
+          "tags": ["security", "risk-analysis", "smart-contracts", "evm", "base", "ethereum", "defi", "trading", "telegram", "alerts", "sentiment", "social", "pre-trade", "agent-safety"],
           "requestBody": {
             "required": true,
             "content": {
@@ -182,15 +119,8 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "address": {
-                      "type": "string",
-                      "description": "0x-prefixed EVM contract address to scan"
-                    },
-                    "chain": {
-                      "type": "string",
-                      "enum": ["base", "ethereum"],
-                      "description": "Chain to query (default: base)"
-                    }
+                    "address": { "type": "string", "description": "0x-prefixed EVM contract address to scan" },
+                    "chain": { "type": "string", "enum": ["base", "ethereum"], "description": "Chain to query (default: base)" }
                   },
                   "required": ["address"]
                 }
@@ -198,13 +128,7 @@
             }
           },
           "x-payment-info": {
-            "price": {
-              "fixed": {
-                "mode": "fixed",
-                "currency": "USD",
-                "amount": "0.04"
-              }
-            },
+            "price": { "fixed": { "mode": "fixed", "currency": "USD", "amount": "0.04" } },
             "protocols": [{ "x402": {} }]
           },
           "responses": {
@@ -219,23 +143,13 @@
                     "risk": {
                       "isContract": true,
                       "isProxy": true,
-                      "flags": [
-                        {
-                          "label": "upgradeable proxy (EIP-1967) — logic can be swapped by admin",
-                          "weight": 10
-                        }
-                      ],
+                      "flags": [{ "label": "upgradeable proxy (EIP-1967) — logic can be swapped by admin", "weight": 10 }],
                       "riskScore": 10,
                       "riskLevel": "medium"
                     },
                     "alerts": {
                       "alertMentions": 0,
-                      "categories": {
-                        "securityAlert": 0,
-                        "whaleMovement": 0,
-                        "listing": 0,
-                        "other": 0
-                      },
+                      "categories": { "securityAlert": 0, "whaleMovement": 0, "listing": 0, "other": 0 },
                       "channels": [],
                       "note": "No mentions in the current rolling window (last 30 messages per tracked channel). Absence of alerts is not a safety guarantee."
                     }

@@ -277,7 +277,6 @@ function paidOperation(terms, { operationId, summary }) {
     },
   };
 }
-
 export function buildOpenApiSpec(baseUrl) {
   return {
     openapi: "3.1.0",
@@ -286,11 +285,21 @@ export function buildOpenApiSpec(baseUrl) {
       version: "1.0.0",
       description:
         "Pre-trade safety checks for smart contracts and tokens. All paid routes use the x402 'exact' scheme settling in USDC on Base (eip155:8453). Every 402 carries a signed offer and every 200 a signed receipt (EIP-712) — see /.well-known/x402 -> signing.",
+      // x402scan reads info.contact.email to verify origin ownership and to
+      // populate the merchant contact field on the listing. Standard OpenAPI
+      // 3.1 field, not an extension — the value must be a real, monitored
+      // email address (RFC 5322 format).
+      contact: {
+        name: "0xhodhod",
+        email: process.env.CONTACT_EMAIL || "freetayyeb@proton.me",
+      },
+      // Free-form high-level guidance for agents. The x402scan spec
+      // recommends info.x-guidance as the place to explain how to use the
+      // API at a high level — separate from per-route descriptions.
+      "x-guidance":
+        "Use /v1/full-check for pre-trade safety. It returns both a risk score and alert-channel activity in one call, and it is cheaper than calling /v1/scan and /v1/alert-check separately ($0.04 vs $0.05). A high risk score alone is not proof of malice; treat it as a prompt to look closer. securityAlert: 0 in the alerts block means 'no mentions in the current rolling window', not 'never flagged'.",
     },
     servers: [{ url: baseUrl }],
-    // Only the three paid /v1/* routes appear here. Free routes (/health,
-    // /llms.txt, /.well-known/x402, /app) MUST NOT be listed — x402scan
-    // rejects registrations whose spec advertises non-paid paths.
     paths: {
       [CANONICAL_SCAN_PATH]: {
         post: paidOperation(getScanTerms(), {
