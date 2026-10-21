@@ -1,12 +1,22 @@
 // Pay any x402 route once and print the decoded PAYMENT-RESPONSE header.
-//   node scripts/pay-and-receipt.js http://localhost:3000/v1/alert-check '{"address":"USDC"}'
+//
+// Accepts either a JSON body or a bare address/ticker:
+//   node scripts/pay-and-receipt.js <url> '{"address":"USDC"}'
+//   node scripts/pay-and-receipt.js <url> USDC
+//   node scripts/pay-and-receipt.js <url> 0xd9aAEc86… [chain]
+//
+// The bare-address form exists because PowerShell strips inner double quotes
+// from native-command arguments, so inline JSON arrives at Node as
+// {address:0x…} and JSON.parse throws. A bare token with no quotes survives
+// the shell intact. POSIX shells are unaffected — both forms work there.
+//
 // Requires PAYER_PRIVATE_KEY with a little USDC on Base (eip155:8453).
 import "dotenv/config";
 import { privateKeyToAccount } from "viem/accounts";
 
-const [url, bodyJson] = process.argv.slice(2);
-if (!url || !bodyJson) {
-  console.error('usage: node scripts/pay-and-receipt.js <url> \'{"address":"USDC"}\'');
+const [url, arg, chainArg] = process.argv.slice(2);
+if (!url || !arg) {
+  console.error("usage: node scripts/pay-and-receipt.js <url> <json-or-address> [chain]");
   process.exit(1);
 }
 const pk = process.env.PAYER_PRIVATE_KEY;
@@ -16,7 +26,20 @@ if (!/^0x[0-9a-fA-F]{64}$/.test(pk || "")) {
 }
 
 const account = privateKeyToAccount(pk);
-const body = JSON.parse(bodyJson);
+
+// Try JSON first; fall back to treating the argument as a bare address/ticker.
+// A bare token has no braces, so this cannot misclassify valid JSON.
+let body;
+try {
+  body = JSON.parse(arg);
+} catch {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(arg) && !/^[A-Za-z0-9]{2,16}$/.test(arg)) {
+    console.error("Argument is neither valid JSON nor a plausible address/ticker: " + arg);
+    process.exit(1);
+  }
+  body = { address: arg };
+  if (chainArg) body.chain = chainArg;
+}
 
 // 1. First request — expect 402 with the signed offer
 const r1 = await fetch(url, {
@@ -107,7 +130,7 @@ const resp = JSON.parse(Buffer.from(respB64, "base64").toString("utf8"));
 const receipt = resp?.extensions?.["offer-receipt"]?.info?.receipt;
 console.log("\n=== receipt ===");
 console.log(JSON.stringify(receipt, null, 2));
- // The settlement hash lives at the top level of PAYMENT-RESPONSE, not inside
+// The settlement hash lives at the top level of PAYMENT-RESPONSE, not inside
 // the signed receipt (whose schema marks `transaction` as optional).
 const txHash = resp?.transaction || resp?.transactionHash;
 if (txHash) {

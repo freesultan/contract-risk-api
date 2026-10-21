@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import favicon from "serve-favicon";
 import path from "path";
+import { waitUntil } from "@vercel/functions";
 import { fetchOnChainData, DEFAULT_RPC_URLS } from "./chain.js";
 import { analyzeBytecode } from "./heuristics.js";
 import { logUsage } from "./logger.js";
@@ -104,8 +105,29 @@ app.get("/openapi.json", (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Notification helpers
+// Background work
 // ---------------------------------------------------------------------------
+
+/**
+ * Run a promise after the response has been sent, without blocking the client.
+ *
+ * On Vercel the function is frozen as soon as the response is returned, so a
+ * bare `void promise` is killed mid-flight — which is why the Telegram
+ * notification fired locally but arrived late or dropped in production.
+ * waitUntil() extends the function's lifetime until the promise settles.
+ *
+ * Outside Vercel (local `npm start`), waitUntil is a no-op or its shim may be
+ * inactive; the long-lived process won't freeze the promise, so the fallback
+ * is simply to let it run.
+ */
+function background(promise) {
+  try {
+    waitUntil(promise);
+  } catch {
+    // Local dev: nothing to do. The promise is already in flight and this
+    // process won't freeze it.
+  }
+}
 
 // Compact an address/ticker for the Telegram message. Long addresses are
 // truncated so the notification stays phone-readable; tickers like "USDC"
@@ -156,12 +178,14 @@ app.post(SCAN_PATHS, async (req, res) => {
     // Respond first — the client's latency must not depend on Telegram.
     res.json({ address, chain, ...result });
 
-    // Then notify, fire-and-forget. `void` makes the intent explicit.
-    void notifyTelegram(
-      `${header("/v1/scan", "$0.02", res.locals.paymentMode)}\n` +
-      `${shortId(address)} (${chain})\n` +
-      `Risk: ${result.riskLevel} (${result.riskScore})\n` +
-      `${latencyMs}ms`
+    // Then notify via waitUntil so the fetch survives the response boundary.
+    background(
+      notifyTelegram(
+        `${header("/v1/scan", "$0.02", res.locals.paymentMode)}\n` +
+        `${shortId(address)} (${chain})\n` +
+        `Risk: ${result.riskLevel} (${result.riskScore})\n` +
+        `${latencyMs}ms`
+      )
     );
   } catch (err) {
     logUsage({
@@ -201,12 +225,14 @@ app.post(ALERT_PATHS, async (req, res) => {
 
     res.json({ query: address, chain, ...result });
 
-    void notifyTelegram(
-      `${header("/v1/alert-check", "$0.03", res.locals.paymentMode)}\n` +
-      `Query: ${shortId(address)} (${chain})\n` +
-      `Mentions: ${result.alertMentions} \u00B7 ` +
-      `sec ${c.securityAlert || 0} \u00B7 whale ${c.whaleMovement || 0} \u00B7 listing ${c.listing || 0}\n` +
-      `${latencyMs}ms`
+    background(
+      notifyTelegram(
+        `${header("/v1/alert-check", "$0.03", res.locals.paymentMode)}\n` +
+        `Query: ${shortId(address)} (${chain})\n` +
+        `Mentions: ${result.alertMentions} \u00B7 ` +
+        `sec ${c.securityAlert || 0} \u00B7 whale ${c.whaleMovement || 0} \u00B7 listing ${c.listing || 0}\n` +
+        `${latencyMs}ms`
+      )
     );
   } catch (err) {
     logUsage({
@@ -255,12 +281,14 @@ app.post(FULLCHECK_PATHS, async (req, res) => {
 
     res.json({ address, chain, risk, alerts });
 
-    void notifyTelegram(
-      `${header("/v1/full-check", "$0.04", res.locals.paymentMode)}\n` +
-      `${shortId(address)} (${chain})\n` +
-      `Risk: ${risk.riskLevel} (${risk.riskScore}) \u00B7 ` +
-      `Alerts: ${alerts.alertMentions}\n` +
-      `${latencyMs}ms`
+    background(
+      notifyTelegram(
+        `${header("/v1/full-check", "$0.04", res.locals.paymentMode)}\n` +
+        `${shortId(address)} (${chain})\n` +
+        `Risk: ${risk.riskLevel} (${risk.riskScore}) \u00B7 ` +
+        `Alerts: ${alerts.alertMentions}\n` +
+        `${latencyMs}ms`
+      )
     );
   } catch (err) {
     logUsage({
