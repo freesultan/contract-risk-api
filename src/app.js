@@ -17,6 +17,7 @@ import { buildUiHtml } from "./ui.js";
 import { searchChannels } from "./telegram.js";
 import { summarize } from "./categorize.js";
 import { TRACKED_CHANNELS } from "./channels.js";
+import { notifyTelegram } from "./telegram-notify.js";
 
 const app = express();
 
@@ -103,6 +104,29 @@ app.get("/openapi.json", (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Notification helpers
+// ---------------------------------------------------------------------------
+
+// Compact an address/ticker for the Telegram message. Long addresses are
+// truncated so the notification stays phone-readable; tickers like "USDC"
+// pass through unchanged.
+function shortId(v) {
+  if (v == null) return "";
+  const s = String(v);
+  if (s.length <= 18) return s;
+  return s.slice(0, 10) + "\u2026" + s.slice(-4);
+}
+
+// Standard header line for every notification. Payment mode distinguishes a
+// real settled call from a local free-test call, which is the single most
+// useful signal when monitoring.
+function header(route, price, mode) {
+  return mode === "paid"
+    ? `\uD83D\uDCB0 ${route} \u2014 ${price}`
+    : `\uD83E\uDDEA ${route} \u2014 free-test`;
+}
+
+// ---------------------------------------------------------------------------
 // Paid routes
 // ---------------------------------------------------------------------------
 
@@ -117,6 +141,7 @@ app.post(SCAN_PATHS, async (req, res) => {
   try {
     const { bytecode, implementationSlotValue } = await fetchOnChainData(address, chain);
     const result = analyzeBytecode({ bytecode, implementationSlotValue });
+    const latencyMs = Date.now() - startedAt;
 
     logUsage({
       route: req.path,
@@ -125,10 +150,19 @@ app.post(SCAN_PATHS, async (req, res) => {
       paymentMode: res.locals.paymentMode,
       riskLevel: result.riskLevel,
       riskScore: result.riskScore,
-      latencyMs: Date.now() - startedAt,
+      latencyMs,
     });
 
+    // Respond first — the client's latency must not depend on Telegram.
     res.json({ address, chain, ...result });
+
+    // Then notify, fire-and-forget. `void` makes the intent explicit.
+    void notifyTelegram(
+      `${header("/v1/scan", "$0.02", res.locals.paymentMode)}\n` +
+      `${shortId(address)} (${chain})\n` +
+      `Risk: ${result.riskLevel} (${result.riskScore})\n` +
+      `${latencyMs}ms`
+    );
   } catch (err) {
     logUsage({
       route: req.path,
@@ -153,6 +187,8 @@ app.post(ALERT_PATHS, async (req, res) => {
   try {
     const hits = await searchChannels(address, TRACKED_CHANNELS);
     const result = summarize(hits);
+    const latencyMs = Date.now() - startedAt;
+    const c = result.categories || {};
 
     logUsage({
       route: req.path,
@@ -160,10 +196,18 @@ app.post(ALERT_PATHS, async (req, res) => {
       chain,
       paymentMode: res.locals.paymentMode,
       alertMentions: result.alertMentions,
-      latencyMs: Date.now() - startedAt,
+      latencyMs,
     });
 
     res.json({ query: address, chain, ...result });
+
+    void notifyTelegram(
+      `${header("/v1/alert-check", "$0.03", res.locals.paymentMode)}\n` +
+      `Query: ${shortId(address)} (${chain})\n` +
+      `Mentions: ${result.alertMentions} \u00B7 ` +
+      `sec ${c.securityAlert || 0} \u00B7 whale ${c.whaleMovement || 0} \u00B7 listing ${c.listing || 0}\n` +
+      `${latencyMs}ms`
+    );
   } catch (err) {
     logUsage({
       route: req.path,
@@ -196,6 +240,7 @@ app.post(FULLCHECK_PATHS, async (req, res) => {
 
     const risk = analyzeBytecode(onChain);
     const alerts = summarize(hits);
+    const latencyMs = Date.now() - startedAt;
 
     logUsage({
       route: req.path,
@@ -205,10 +250,18 @@ app.post(FULLCHECK_PATHS, async (req, res) => {
       riskLevel: risk.riskLevel,
       riskScore: risk.riskScore,
       alertMentions: alerts.alertMentions,
-      latencyMs: Date.now() - startedAt,
+      latencyMs,
     });
 
     res.json({ address, chain, risk, alerts });
+
+    void notifyTelegram(
+      `${header("/v1/full-check", "$0.04", res.locals.paymentMode)}\n` +
+      `${shortId(address)} (${chain})\n` +
+      `Risk: ${risk.riskLevel} (${risk.riskScore}) \u00B7 ` +
+      `Alerts: ${alerts.alertMentions}\n` +
+      `${latencyMs}ms`
+    );
   } catch (err) {
     logUsage({
       route: req.path,
