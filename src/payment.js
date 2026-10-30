@@ -26,6 +26,15 @@ import { privateKeyToAccount } from "viem/accounts";
 const ENABLED = String(process.env.ENABLE_PAYMENTS).toLowerCase() === "true";
 const NETWORK = process.env.X402_NETWORK || "eip155:8453"; // Base mainnet
 
+// Token metadata for the 402 body echo. The middleware derives this from the
+// registered scheme for the PAYMENT-REQUIRED header, but the body is built by
+// hand here (see unpaidResponseBody below), so it must be stated separately.
+// If X402_NETWORK is ever changed away from Base, these must change with it —
+// otherwise the body will advertise terms for the wrong chain/token.
+const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const USDC_BASE_EXTRA = { name: "USD Coin", version: "2" };
+const MAX_TIMEOUT_SECONDS = 300;
+
 // ---------------------------------------------------------------------------
 // Paths — the single source of truth, shared by app.js (route registration),
 // discovery.js (manifest + llms.txt + openapi.json) and the middleware below.
@@ -166,6 +175,38 @@ export function getFullCheckTerms() {
     exampleInput: FULLCHECK_EXAMPLE_INPUT,
     exampleOutput: FULLCHECK_EXAMPLE_OUTPUT,
   };
+}
+
+// ---------------------------------------------------------------------------
+// 402 body accepts[] — must match the header's accepts[] shape
+// ---------------------------------------------------------------------------
+
+// Convert "$0.02" to the atomic string "20000" that the exact scheme uses.
+// USDC has 6 decimals. The env vars are expected to be "$X.YZ"; anything
+// finer would round here, which is fine for prices but would be wrong for
+// arbitrary amounts.
+function priceToAtomic(priceStr) {
+  const s = String(priceStr).replace(/^\$/, "");
+  const [whole = "0", frac = ""] = s.split(".");
+  const padded = (whole + frac.padEnd(6, "0").slice(0, 6)).replace(/^0+(?=\d)/, "") || "0";
+  return padded;
+}
+
+// Build the full accepts[] shape that the middleware emits in the
+// PAYMENT-REQUIRED header. The body echo must carry the same fields: asset,
+// atomic amount, extra {name, version}. Without them, a client that falls
+// back to the body (header-stripping proxy, body-only tooling) can see the
+// price but cannot build a valid EIP-3009 authorization.
+function fullAccepts(terms) {
+  return [{
+    scheme: "exact",
+    network: terms.network,
+    asset: USDC_BASE,
+    amount: priceToAtomic(terms.price),
+    payTo: terms.payTo,
+    maxTimeoutSeconds: MAX_TIMEOUT_SECONDS,
+    extra: USDC_BASE_EXTRA,
+  }];
 }
 
 // ---------------------------------------------------------------------------
@@ -319,20 +360,20 @@ export async function buildPaymentMiddleware() {
     },
     // Echo the terms in the 402 body as well as the PAYMENT-REQUIRED header.
     // The header is canonical, but a cross-origin browser client can only read
-    // it when CORS exposes it, and the body always survives — PayAI's own
-    // reference merchant does the same.
+    // it when CORS exposes it, and a header-stripping proxy can eat it
+    // entirely. Both cases fall back to this body, so the body's accepts[]
+    // must be the SAME shape as the header's: scheme, network, asset, atomic
+    // amount, payTo, maxTimeoutSeconds, extra.
+    //
+    // Before this was fixed, the body used {price: "$0.02"} with no asset,
+    // amount, or extra — actionable-looking but unusable: a body-reading
+    // client could not build a valid EIP-3009 authorization from it.
     unpaidResponseBody: () => ({
       contentType: "application/json",
       body: {
         x402Version: 2,
         error: "PAYMENT-SIGNATURE header is required",
-        accepts: [{
-          scheme: "exact",
-          network: terms.network,
-          payTo: terms.payTo,
-          price: terms.price,
-          description: terms.description,
-        }],
+        accepts: fullAccepts(terms),
       },
     }),
   });
