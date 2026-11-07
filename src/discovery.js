@@ -23,6 +23,32 @@ import {
 import { RISK_THRESHOLDS, PROXY_WEIGHT } from "./heuristics.js";
 import { FLAGGED_SELECTORS } from "./selectors.js";
 
+// Settlement token metadata. The manifest's accepts[] must carry asset and
+// atomic amount for SealKeeper (and any other price-verifying crawler) to
+// match the live challenge. Duplicated from payment.js's USDC_BASE constants
+// because discovery.js does not currently import them — if you ever support a
+// second chain, key this off terms.network instead of hardcoding.
+const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+// "$0.02" -> "20000". USDC has 6 decimals.
+function priceToAtomic(priceStr) {
+  const s = String(priceStr).replace(/^\$/, "");
+  const [whole = "0", frac = ""] = s.split(".");
+  const padded = (whole + frac.padEnd(6, "0").slice(0, 6)).replace(/^0+(?=\d)/, "") || "0";
+  return padded;
+}
+
+// SealKeeper ownership proofs. Absent by default — the manifest still works,
+// it just won't prove the payTo wallet (SealKeeper withholds the SEAL until
+// the wallet is proven, but the endpoints remain usable). Set
+// SEALKEEPER_OWNERSHIP_PROOF in env (via scripts/sign-ownership.js) to
+// publish it.
+function ownershipProofs() {
+  const proof = process.env.SEALKEEPER_OWNERSHIP_PROOF;
+  if (!proof || !/^0x[0-9a-fA-F]{130}$/.test(proof)) return [];
+  return [proof];
+}
+
 // All paid routes, in the order they should appear in listings. Grouped so
 // every discovery surface (manifest, llms.txt, openapi.json) iterates the same
 // shape and can't advertise a route the middleware doesn't gate.
@@ -56,11 +82,17 @@ export function buildX402Manifest(baseUrl) {
         description: terms.description,
         serviceName: terms.serviceName,
         tags: terms.tags,
+        // SealKeeper reads accepts[] here and matches it against the live 402
+        // challenge. Must carry asset + atomic amount + payTo, NOT a
+        // human-readable "$0.02" price string. An entry that asks more than
+        // its published amount withholds the SEAL until two calls in a row
+        // ask that price or less.
         accepts: [{
           scheme: "exact",
           network: terms.network,
+          asset: USDC_BASE,
+          amount: priceToAtomic(terms.price),
           payTo: terms.payTo,
-          price: terms.price,
         }],
         input: { type: "http", bodyType: "json", body: terms.exampleInput },
         inputSchema: terms.inputSchema,
@@ -73,6 +105,12 @@ export function buildX402Manifest(baseUrl) {
   const manifest = {
     x402Version: 2,
     resources,
+    // Signed by the payTo wallet's key over the origin URL (no path, no
+    // trailing slash). SealKeeper reads the first 10 entries and treats a
+    // bare address as proving nothing — only a valid EIP-191 signature over
+    // the origin counts. Empty array = wallet unproven = no SEAL, but the
+    // endpoints still work.
+    ownershipProofs: ownershipProofs(),
     canonical: `${baseUrl}${CANONICAL_SCAN_PATH}`,
     discovery: {
       llmsTxt: `${baseUrl}/llms.txt`,
@@ -81,15 +119,10 @@ export function buildX402Manifest(baseUrl) {
     x402: {
       enabled: ENABLED,
       mode: ENABLED ? "paid" : "free-test",
-      // Advertise the extension so a crawler knows to look for it before
-      // paying. Absent in free-test mode, where nothing is signed.
       extensions: signing ? ["offer-receipt"] : [],
     },
   };
 
-  // Published signing identity. A client verifies a receipt by recovering the
-  // signer from its EIP-712 signature and comparing against this address —
-  // no shared secret, no document to fetch, nothing mutable in the trust path.
   if (signing) {
     manifest.signing = {
       format: signing.format,
@@ -107,7 +140,7 @@ export function buildLlmsTxt(baseUrl) {
   const full = getFullCheckTerms();
   const signing = safeSigningInfo();
 
-  const payTo = scan.payTo; // same wallet for all three
+  const payTo = scan.payTo;
   const payToLine = payTo ? `, payTo ${payTo}` : " (payTo not yet configured)";
 
   const signingSection = signing
@@ -220,9 +253,8 @@ ${baseUrl}/openapi.json
 // OpenAPI 3.1 — required for x402scan registration
 // ---------------------------------------------------------------------------
 
-// OpenAPI's x-payment-info.price.fixed.amount is decimal USD ("0.02"), NOT the
-// atomic USDC units ("20000") that appear in the live 402 challenge. Convert
-// here once so the two can't silently diverge.
+// OpenAPI's x-payment-info.price.amount is decimal USD ("0.02"), NOT the
+// atomic USDC units ("20000") that appear in the live 402 challenge.
 function usdAmount(priceStr) {
   return String(priceStr).replace(/^\$/, "");
 }
@@ -237,10 +269,9 @@ function requestBodySchema(termInputSchema) {
   };
 }
 
-// One operation per paid route. `x-payment-info` and the 402 response are the
-// two things x402scan requires — the description/summary are for humans reading
-// the generated docs.
+// One operation per paid route.
 function paidOperation(terms, { operationId, summary }) {
+  const usd = usdAmount(terms.price);
   return {
     operationId,
     summary,
@@ -252,12 +283,19 @@ function paidOperation(terms, { operationId, summary }) {
         "application/json": { schema: requestBodySchema(terms.inputSchema) },
       },
     },
+    // SealKeeper reads x-payment-info.price.mode / .amount / .currency at the
+    // FLAT level. The earlier shape was {fixed: {mode, amount, currency}},
+    // which no verifier could read. Keep the nested `fixed` alias too, so any
+    // tool that follows the older convention still finds the price.
     "x-payment-info": {
       price: {
+        mode: "fixed",
+        amount: usd,
+        currency: "USD",
         fixed: {
           mode: "fixed",
           currency: "USD",
-          amount: usdAmount(terms.price),
+          amount: usd,
         },
       },
       protocols: [{ x402: {} }],
@@ -277,6 +315,7 @@ function paidOperation(terms, { operationId, summary }) {
     },
   };
 }
+
 export function buildOpenApiSpec(baseUrl) {
   return {
     openapi: "3.1.0",
@@ -285,17 +324,10 @@ export function buildOpenApiSpec(baseUrl) {
       version: "1.0.0",
       description:
         "Pre-trade safety checks for smart contracts and tokens. All paid routes use the x402 'exact' scheme settling in USDC on Base (eip155:8453). Every 402 carries a signed offer and every 200 a signed receipt (EIP-712) — see /.well-known/x402 -> signing.",
-      // x402scan reads info.contact.email to verify origin ownership and to
-      // populate the merchant contact field on the listing. Standard OpenAPI
-      // 3.1 field, not an extension — the value must be a real, monitored
-      // email address (RFC 5322 format).
       contact: {
         name: "0xhodhod",
         email: process.env.CONTACT_EMAIL || "freetayyeb@proton.me",
       },
-      // Free-form high-level guidance for agents. The x402scan spec
-      // recommends info.x-guidance as the place to explain how to use the
-      // API at a high level — separate from per-route descriptions.
       "x-guidance":
         "Use /v1/full-check for pre-trade safety. It returns both a risk score and alert-channel activity in one call, and it is cheaper than calling /v1/scan and /v1/alert-check separately ($0.04 vs $0.05). A high risk score alone is not proof of malice; treat it as a prompt to look closer. securityAlert: 0 in the alerts block means 'no mentions in the current rolling window', not 'never flagged'.",
     },

@@ -309,7 +309,23 @@ export function buildUiHtml() {
     </dl>
   </details>
 
-  <p class="meta" id="terms"></p>
+    <p class="meta" id="terms"></p>
+
+  <p style="margin-top: 24px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+    <a href="https://sealkeeper.run/agents/0xhodhod.xyz/smartcontractrisk-0xhodhod-xyz"
+       target="_blank" rel="noopener"
+       style="display: inline-block;">
+      <img src="https://api.sealkeeper.run/v1/agents/0Ib1Ki6cLaoGfOAKFwg_JtxLa6aDk5jfxVTP5OX46R0/badge.svg"
+           alt="SealKeeper Service SEAL"
+           height="40">
+    </a>
+    <span class="meta" style="font-size: 12px;">
+      Independently priced &amp; wallet-verified. SealKeeper compares this
+      service's live 402 challenge against the prices published in
+      <a href="/.well-known/x402">/.well-known/x402</a> and
+      <a href="/openapi.json">/openapi.json</a>.
+    </span>
+  </p>
 </div>
 
 <script id="cfg" type="application/json">${JSON.stringify(config)}</script>
